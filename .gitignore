@@ -1,0 +1,10 @@
+.agents
+data/
+__pycache__
+*.py[cod]
+web/node_modules/
+web/dist/
+web/.npm-cache/
+web/.verify/
+.artifact-viewer-api-ready
+.codegraph
