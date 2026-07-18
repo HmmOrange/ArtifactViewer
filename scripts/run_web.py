@@ -23,7 +23,13 @@ def main() -> int:
         indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-index"], cwd=root)
         if indexed.returncode:
             return indexed.returncode
-    return subprocess.call([npm, "run", "dev", "--", "--host", "127.0.0.1"], cwd=web)
+
+    api = subprocess.Popen([sys.executable, "-m", "api.server"], cwd=root)
+    try:
+        return subprocess.call([npm, "run", "dev", "--", "--host", "127.0.0.1"], cwd=web)
+    finally:
+        api.terminate()
+        api.wait()
 
 
 if __name__ == "__main__":

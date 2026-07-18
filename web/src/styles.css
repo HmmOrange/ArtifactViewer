@@ -22,10 +22,7 @@ button, input, select { font: inherit; }
 button { color: inherit; }
 
 .app-shell { width: min(1440px, calc(100% - 40px)); min-height: calc(100vh - 40px); margin: 20px auto; padding: 38px; background: var(--paper); border: 1px solid #cfc5b4; box-shadow: 0 24px 70px rgba(55, 72, 70, .1); }
-.masthead { display: flex; justify-content: space-between; align-items: flex-end; gap: 30px; margin-bottom: 32px; }
-.kicker, .panel-title span, .result-head span, .question-block > span, .answer-grid span, footer > span { margin: 0 0 10px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-h1 { margin: 0; font: 700 clamp(44px, 6vw, 82px)/.76 Georgia, serif; letter-spacing: -.07em; }
-h1 em { color: var(--clay); font-weight: 400; }
+.panel-title span, .result-head span, .question-block > span, .answer-grid span, footer > span, .artifact-copy span { margin: 0 0 10px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
 .totals { display: flex; gap: 18px; flex-wrap: wrap; }
 .status-mark { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .status-mark i, .result-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
@@ -69,6 +66,17 @@ h1 em { color: var(--clay); font-weight: 400; }
 .answer-grid section + section { border-left: 1px solid var(--line); }
 .answer-grid span { display: block; margin-bottom: 25px; }
 .answer-grid p { margin: 0; font: 700 22px/1.4 Georgia, serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 18px; border: 1px solid var(--line); background: var(--line); }
+.artifact-card { display: grid; grid-template-columns: 34px minmax(110px, .55fr) minmax(0, 1fr); gap: 12px; min-height: 118px; padding: 18px; background: #f8f3e8; }
+.artifact-number { color: var(--clay); font: 700 15px Georgia, serif; }
+.artifact-copy span { display: block; margin-bottom: 7px; color: var(--ink); }
+.artifact-copy p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.artifact-links { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
+.artifact-links button { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid #d8d1c4; color: var(--ink); background: #fffdf8; text-align: left; cursor: pointer; transition: border-color .15s ease, transform .15s ease; }
+.artifact-links button:hover { border-color: var(--clay); transform: translateY(-1px); }
+.artifact-links code { overflow: hidden; color: inherit; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-links b { color: var(--clay); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.artifact-links em { padding: 9px 0; color: #9b9d98; font-size: 10px; }
 .result-panel footer { margin-top: auto; padding-top: 28px; }
 .result-panel footer span { display: block; margin-bottom: 6px; }
 .result-panel code { color: #7e847f; font-size: 10px; overflow-wrap: anywhere; }
@@ -79,20 +87,21 @@ h1 em { color: var(--clay); font-weight: 400; }
 
 @media (max-width: 850px) {
   .app-shell { width: 100%; min-height: 100vh; margin: 0; padding: 24px 16px; border: 0; }
-  .masthead { align-items: start; }
   .filter-bar { grid-template-columns: 1fr 1fr; }
   .workspace { grid-template-columns: 1fr; }
   .qa-panel { border-right: 0; border-bottom: 1px solid var(--line); }
   .qa-list { max-height: 265px; }
   .result-panel { min-height: 500px; }
+  .artifact-card { grid-template-columns: 30px minmax(100px, .45fr) minmax(0, 1fr); }
 }
 
 @media (max-width: 560px) {
-  .masthead { display: block; }
-  h1 { font-size: 52px; }
   .filter-bar { grid-template-columns: 1fr; }
   .result-panel { padding: 25px 20px; }
   .question-block { padding: 38px 0 30px; }
   .answer-grid { grid-template-columns: 1fr; }
   .answer-grid section + section { border-top: 1px solid var(--line); border-left: 0; }
+  .artifact-grid { grid-template-columns: 1fr; }
+  .artifact-card { grid-template-columns: 28px minmax(0, 1fr); }
+  .artifact-links { grid-column: 2; }
 }

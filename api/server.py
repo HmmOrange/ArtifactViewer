@@ -5,18 +5,21 @@ from __future__ import annotations
 
 import csv
 import json
+import mimetypes
 import re
+import shutil
+import subprocess
 from collections import Counter
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 INDEX_PATH = DATA / ".artifact-viewer-index.json"
 WEB_INDEX_PATH = ROOT / "web" / "src" / "qa-index.json"
-INDEX_VERSION = 3
+INDEX_VERSION = 5
 QUESTION_KEYS = ("question", "query", "prompt", "qa", "input")
 GOLD_KEYS = ("gold", "golden", "answer", "reference", "ground_truth", "target", "label")
 PRED_KEYS = ("prediction", "predicted", "pred", "response", "output", "model_answer", "model_output")
@@ -200,8 +203,96 @@ def load_output_records(pipeline: str, dataset: str) -> list[dict]:
             "prediction": raw.get("predicted_answer"),
             "status": status,
             "source": str(report_path.relative_to(DATA)),
+            "artifacts": artifact_paths(raw, pipeline, dataset, report_path),
         })
     return records
+
+
+@lru_cache(maxsize=8)
+def artifact_catalog(pipeline: str, dataset: str) -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
+    root = DATA / "Artifacts" / pipeline / dataset
+    by_name: dict[str, list[Path]] = {}
+    by_part: dict[str, list[Path]] = {}
+    if not root.exists():
+        return by_name, by_part
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        by_name.setdefault(path.name.casefold(), []).append(path)
+        for part in path.relative_to(root).parts[:-1]:
+            by_part.setdefault(part.casefold(), []).append(path)
+    return by_name, by_part
+
+
+def relative_file(path: Path | None) -> str | None:
+    if path and path.is_file():
+        return path.relative_to(DATA).as_posix()
+    return None
+
+
+def external_filename(raw_path) -> str:
+    if not raw_path:
+        return ""
+    cleaned = re.split(r":(?:line\s+\d+|json\[.*)$", str(raw_path), flags=re.IGNORECASE)[0]
+    cleaned = cleaned.split("!")[-1]
+    return re.split(r"[\\/]", cleaned)[-1]
+
+
+def artifact_paths(raw: dict, pipeline: str, dataset: str, report_path: Path) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {key: [] for key in ("input", "interpreted", "workflow", "output")}
+    artifact_root = DATA / "Artifacts" / pipeline / dataset
+    by_name, by_part = artifact_catalog(pipeline, dataset)
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+
+    def add(section: str, path: Path | None):
+        relative = relative_file(path)
+        if relative and relative not in sections[section]:
+            sections[section].append(relative)
+
+    sample_name = external_filename(raw.get("sample_path"))
+    if sample_name:
+        dataset_matches = list((DATA / "Datasets" / dataset).rglob(sample_name))
+        add("input", dataset_matches[0] if dataset_matches else None)
+    table_id = str(raw.get("table_id") or raw.get("sample_id") or "")
+    add("input", DATA / "Datasets" / f"{dataset}_xlsx" / f"{table_id}.xlsx")
+
+    if pipeline == "SpreadsheetAgent":
+        contexts = metadata.get("contexts") if isinstance(metadata.get("contexts"), list) else []
+        for context in contexts:
+            if not isinstance(context, dict):
+                continue
+            cache_name = external_filename(context.get("cache_dir"))
+            cache_root = artifact_root / cache_name
+            for structure in context.get("structure_paths") or []:
+                add("interpreted", cache_root / external_filename(structure))
+            add("workflow", cache_root / "manifest.json")
+
+    elif pipeline == "GraphOtter":
+        preprocess = metadata.get("preprocess") if isinstance(metadata.get("preprocess"), dict) else {}
+        table_name = external_filename(preprocess.get("table_path"))
+        matches = by_name.get(table_name.casefold(), []) if table_name else []
+        add("interpreted", matches[0] if matches else None)
+        logs = by_name.get("graphotter_official.log", [])
+        add("workflow", logs[0] if logs else None)
+
+    elif pipeline == "ST-raptor":
+        run_name = external_filename(metadata.get("run_dir"))
+        run_files = by_part.get(run_name.casefold(), []) if run_name else []
+        add("interpreted", next((path for path in run_files if path.suffix.lower() == ".html"), None))
+        add("workflow", next((path for path in run_files if path.name == "payload.json"), None))
+
+        preprocess = metadata.get("preprocess") if isinstance(metadata.get("preprocess"), dict) else {}
+        official_table_id = str(preprocess.get("official_table_id") or "")
+        pkl_matches = by_name.get(f"{official_table_id}.pkl".casefold(), []) if official_table_id else []
+        add("interpreted", pkl_matches[0] if pkl_matches else None)
+
+        log_name = external_filename(metadata.get("log_dir"))
+        log_files = by_part.get(log_name.casefold(), []) if log_name else []
+        add("workflow", next((path for path in log_files if path.suffix.lower() == ".log"), None))
+        add("output", next((path for path in run_files if path.name == "output.jsonl"), None))
+
+    add("output", report_path)
+    return sections
 
 
 def build_index() -> dict:
@@ -234,6 +325,15 @@ def load_index() -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    @staticmethod
+    def data_path(relative: str) -> Path | None:
+        path = (DATA / unquote(relative).replace("/", "\\")).resolve()
+        try:
+            path.relative_to(DATA.resolve())
+        except ValueError:
+            return None
+        return path
+
     def do_GET(self):
         request = urlparse(self.path)
         if request.path == "/api/health":
@@ -269,6 +369,25 @@ class Handler(BaseHTTPRequestHandler):
                 "offset": offset,
                 "totals": {status: totals.get(status, 0) for status in ("correct", "wrong", "error")},
             }
+        elif request.path.startswith("/api/files/"):
+            path = self.data_path(request.path.removeprefix("/api/files/"))
+            if path is None:
+                self.send_error(403)
+                return
+            if not path.is_file():
+                self.send_error(404)
+                return
+            content_type = {
+                ".jsonl": "application/x-ndjson; charset=utf-8",
+                ".log": "text/plain; charset=utf-8",
+            }.get(path.suffix.lower(), mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(path.stat().st_size))
+            self.end_headers()
+            with path.open("rb") as handle:
+                shutil.copyfileobj(handle, self.wfile)
+            return
         else:
             self.send_error(404)
             return
@@ -278,6 +397,27 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        request = urlparse(self.path)
+        if request.path != "/api/reveal":
+            self.send_error(404)
+            return
+        relative = parse_qs(request.query).get("path", [""])[0]
+        path = self.data_path(relative)
+        if path is None:
+            self.send_error(403)
+            return
+        if not path.exists():
+            self.send_error(404)
+            return
+        try:
+            subprocess.Popen(["explorer.exe", f"/select,{path}"])
+        except OSError:
+            self.send_error(500, "Could not open Windows Explorer")
+            return
+        self.send_response(204)
+        self.end_headers()
 
     def log_message(self, *_):
         return
