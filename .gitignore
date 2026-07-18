@@ -8,3 +8,5 @@ web/.npm-cache/
 web/.verify/
 .artifact-viewer-api-ready
 .codegraph
+
+.vscode
