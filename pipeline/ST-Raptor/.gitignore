@@ -1,0 +1,11 @@
+
+**/__pycache__/** 
+
+data/sstqa_zh_4.0
+data/temp_tables/
+log/
+cache/
+history/
+data/uploads/
+data/SSTQA/
+utils/constants_local.py

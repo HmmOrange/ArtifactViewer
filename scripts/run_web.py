@@ -19,8 +19,26 @@ def main() -> int:
             return installed.returncode
 
     index_path = web / "src" / "qa-index.json"
-    if not index_path.exists():
+    siflex_index_path = web / "src" / "siflex-index.json"
+    tabular_models_index_path = web / "src" / "tabular-models-index.json"
+    golden_cases_path = root / "data" / "Datasets" / "SiFlex" / "golden_tests" / "compiled" / "golden_cases.json"
+    siflex_needs_refresh = (
+        golden_cases_path.is_file()
+        and (
+            not siflex_index_path.exists()
+            or golden_cases_path.stat().st_mtime_ns > siflex_index_path.stat().st_mtime_ns
+        )
+    )
+    if (
+        not index_path.exists()
+        or not siflex_index_path.exists()
+        or not tabular_models_index_path.exists()
+    ):
         indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-index"], cwd=root)
+        if indexed.returncode:
+            return indexed.returncode
+    elif siflex_needs_refresh:
+        indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-siflex-index"], cwd=root)
         if indexed.returncode:
             return indexed.returncode
 
