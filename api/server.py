@@ -1299,12 +1299,12 @@ def siflex_validation(source_path: Path | None, sections: list[dict], yaml_path:
         and scores["sheets"] == 1
         and scores["ranges"] == 1
         and scores["populatedData"] >= 0.50
-        and scores["headerAlignment"] >= 0.60
+        and scores["headerAlignment"] == 1
     )
     return {
         "status": "validated" if valid else "invalid",
         "method": method,
-        "description": "Every referenced sheet and range exists; at least 50% of data ranges contain values; at least 60% of YAML labels align with their declared workbook headers.",
+        "description": "Every referenced sheet and range exists; at least 50% of data ranges contain values; every YAML label aligns with its declared workbook header.",
         **{key: round(value, 4) for key, value in scores.items()},
         "metrics": [
             {"key": "sheets", "label": "Sheets", "value": round(scores["sheets"], 4), "detail": f"{sheet_matches}/{sheet_total}"},
@@ -1737,7 +1737,7 @@ def build_mismatch_index(index_payload: dict | None = None) -> dict:
     payload = index_payload or load_index()
     records = []
     checked = Counter()
-    for pipeline in ("GraphOtter", "SpreadsheetAgent", "ST-raptor"):
+    for pipeline in ("GraphOtter", "ST-raptor"):
         for dataset, items in payload.get("records", {}).get(pipeline, {}).items():
             for record in items:
                 artifacts = record.get("artifacts") if isinstance(record.get("artifacts"), dict) else {}
