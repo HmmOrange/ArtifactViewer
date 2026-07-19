@@ -28,23 +28,38 @@ On Windows, use `py --version` if the `python` command is unavailable.
 
 ## 1. Download the artifact data
 
-Download the Google Drive folder named `[Logs] All pipelines`:
+Download the artifact archive from Google Drive:
 
-https://drive.google.com/drive/u/0/folders/1kSXiNRfyiZAEsqtKzStyeO1JhhtWhQMt
+[Download the data archive](https://drive.google.com/file/d/1nn50mdHGA2QrVRqjo8HM0THHBGrHehvf/view?usp=sharing)
 
-Google Drive may download the folder as a ZIP archive. Extract it before continuing.
+Open the link and select **Download** in Google Drive. If Google Drive displays a warning that it cannot scan the large file for viruses, select **Download anyway**.
 
-## 2. Rename and place the folder
+## 2. Unzip and place the data
 
-Rename the extracted `[Logs] All pipelines` folder to `data`, using lowercase letters, and place it in the repository root.
+1. Locate the downloaded ZIP file, usually in the `Downloads` folder.
+2. Extract or unzip the archive.
+3. Open the extracted folder and find the folder that directly contains `Artifacts`, `Datasets`, `Log_Tabular_Models`, `Log_tabAgent_Siflex`, and `Outputs`.
+4. Rename that folder to `data`, using lowercase letters, if it has a different name.
+5. Move `data` into the `ArtifactViewer` repository root, beside `api`, `pipeline`, `scripts`, and `web`.
 
-The resulting layout must look like this:
+The expected repository structure is:
 
 ```text
 ArtifactViewer/
 |-- api/
+|   |-- __init__.py
+|   `-- server.py
+|-- pipeline/
 |-- scripts/
+|   |-- download_and_run.py
+|   |-- download_data.py
+|   `-- run_web.py
 |-- web/
+|   |-- src/
+|   |-- index.html
+|   |-- package-lock.json
+|   |-- package.json
+|   `-- vite.config.js
 |-- README.md
 `-- data/
     |-- Artifacts/
@@ -54,26 +69,28 @@ ArtifactViewer/
     `-- Outputs/
 ```
 
-Do not place the downloaded folder one level too deep. This is incorrect:
+The five artifact folders must be directly inside `data`. Do not keep an extra extracted-folder level.
+
+Incorrect:
 
 ```text
-ArtifactViewer/data/[Logs] All pipelines/Artifacts/
+ArtifactViewer/data/extracted-folder/Artifacts/
 ```
 
-The correct path is:
+Correct:
 
 ```text
 ArtifactViewer/data/Artifacts/
 ```
 
-On macOS or Linux, you can move and rename the extracted folder from a terminal:
+On macOS or Linux, the final move can also be done from a terminal. Replace the example source path with the actual extracted folder:
 
 ```bash
 cd /path/to/ArtifactViewer
-mv "/path/to/[Logs] All pipelines" data
+mv "/path/to/extracted-folder" data
 ```
 
-On Windows, rename the folder in File Explorer to `data`, then move it beside `api`, `scripts`, and `web`.
+On Windows, use File Explorer to extract the ZIP, rename the artifact folder to `data`, and move it beside `api`, `pipeline`, `scripts`, and `web`.
 
 ## 3. Create a Python environment
 
@@ -109,7 +126,15 @@ Then run `.venv\Scripts\Activate.ps1` again.
 
 ## 4. Run the web viewer
 
-Run the launcher from the repository root.
+Run the launcher from the repository root. The current directory must be the folder that contains `api`, `scripts`, `web`, and `data`.
+
+Important directory rule:
+
+- Run `python scripts/run_web.py` from `ArtifactViewer`.
+- Run `npm install` or `npm run dev` only from `ArtifactViewer/web`.
+- Do not run `npm install` directly from `ArtifactViewer`; there is no `package.json` in the repository root.
+
+For the normal setup, you do not need to run `npm install` manually. The Python launcher enters `web` and installs the frontend dependencies when needed.
 
 ### macOS or Linux
 
@@ -120,7 +145,14 @@ python scripts/run_web.py
 ### Windows
 
 ```powershell
+cd C:\path\to\ArtifactViewer
 python scripts\run_web.py
+```
+
+Before pressing Enter, the command prompt should end with `ArtifactViewer>`, not `ArtifactViewer\web>`:
+
+```text
+C:\path\to\ArtifactViewer>python scripts\run_web.py
 ```
 
 The launcher automatically:
@@ -172,6 +204,8 @@ npm install
 npm run dev -- --host 127.0.0.1
 ```
 
+The `cd web` step is required because [web/package.json](web/package.json) contains the frontend dependencies.
+
 Then open `http://127.0.0.1:8765`.
 
 ## Troubleshooting
@@ -198,6 +232,62 @@ Install Node.js 18 or newer, close and reopen the terminal, then verify:
 ```bash
 node --version
 npm --version
+```
+
+### `npm ERR! ENOENT: Could not read package.json`
+
+This error means `npm install` was run from the repository root:
+
+```text
+C:\path\to\ArtifactViewer>npm install
+```
+
+That location does not contain `package.json`. Move into `web` before running npm:
+
+```bat
+cd /d C:\path\to\ArtifactViewer\web
+npm install
+cd ..
+python scripts\run_web.py
+```
+
+The expected npm location is:
+
+```text
+C:\path\to\ArtifactViewer\web>npm install
+```
+
+### Vite reports `Failed to resolve import "react-markdown"`
+
+The frontend dependencies are missing or only partially installed. Stop the running viewer with `Ctrl+C`, then reinstall them inside `web`.
+
+Windows Command Prompt:
+
+```bat
+cd /d C:\path\to\ArtifactViewer\web
+npm install
+cd ..
+python scripts\run_web.py
+```
+
+If the same error remains, perform a clean installation:
+
+```bat
+cd /d C:\path\to\ArtifactViewer\web
+rmdir /s /q node_modules
+npm ci
+cd ..
+python scripts\run_web.py
+```
+
+Windows PowerShell clean installation:
+
+```powershell
+cd C:\path\to\ArtifactViewer\web
+Remove-Item -Recurse -Force node_modules
+npm ci
+cd ..
+python scripts\run_web.py
 ```
 
 ### A Python module is missing
