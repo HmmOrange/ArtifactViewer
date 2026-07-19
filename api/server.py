@@ -29,6 +29,7 @@ INDEX_PATH = DATA / ".artifact-viewer-index.json"
 WEB_INDEX_PATH = ROOT / "web" / "src" / "qa-index.json"
 WEB_SIFLEX_INDEX_PATH = ROOT / "web" / "src" / "siflex-index.json"
 WEB_TABULAR_MODELS_INDEX_PATH = ROOT / "web" / "src" / "tabular-models-index.json"
+WEB_MISMATCH_INDEX_PATH = ROOT / "web" / "src" / "mismatch-index.json"
 SIFLEX_ROOT = DATA / "Log_tabAgent_Siflex"
 TABULAR_MODELS_ROOT = DATA / "Log_Tabular_Models"
 DATALAKE_CHALLENGE_ROOT = DATA / "Datasets" / "DataLake-challenge"
@@ -510,10 +511,14 @@ class CompactHtmlTableParser(HTMLParser):
         self.current_row = None
         self.current_cell = None
         self.current_attrs = {}
+        self.current_caption = None
+        self.caption = ""
 
     def handle_starttag(self, tag, attrs):
         if tag == "tr":
             self.current_row = []
+        elif tag == "caption":
+            self.current_caption = []
         elif tag in {"td", "th"} and self.current_row is not None:
             self.current_cell = []
             self.current_attrs = dict(attrs)
@@ -521,6 +526,8 @@ class CompactHtmlTableParser(HTMLParser):
     def handle_data(self, data):
         if self.current_cell is not None:
             self.current_cell.append(data)
+        elif self.current_caption is not None:
+            self.current_caption.append(data)
 
     def handle_endtag(self, tag):
         if tag in {"td", "th"} and self.current_row is not None and self.current_cell is not None:
@@ -531,6 +538,9 @@ class CompactHtmlTableParser(HTMLParser):
             })
             self.current_cell = None
             self.current_attrs = {}
+        elif tag == "caption" and self.current_caption is not None:
+            self.caption = " ".join("".join(self.current_caption).split())
+            self.current_caption = None
         elif tag == "tr" and self.current_row is not None:
             self.rows.append(self.current_row)
             self.current_row = None
@@ -1127,6 +1137,229 @@ def build_siflex_index() -> dict:
     }
 
 
+def normalized_structure_text(value) -> str:
+    text = str(value or "").replace("\\n", " ").replace("\xa0", " ")
+    return re.sub(r"[\W_]+", " ", text, flags=re.UNICODE).strip().casefold()
+
+
+def siflex_header_summary(raw: dict) -> dict:
+    sub_headers = raw.get("sub_headers") if isinstance(raw.get("sub_headers"), list) else []
+    return {
+        "id": str(raw.get("id") or ""),
+        "label": str(raw.get("label") or raw.get("name") or raw.get("id") or "Unnamed field"),
+        "description": str(raw.get("description") or ""),
+        "orientation": str(raw.get("orientation") or ""),
+        "headerRange": str(raw.get("header_range") or ""),
+        "dataRange": str(raw.get("data_range") or ""),
+        "children": [siflex_header_summary(item) for item in sub_headers if isinstance(item, dict)],
+    }
+
+
+def siflex_structure_sections(payload) -> list[dict]:
+    sections = []
+
+    def visit(value, key=""):
+        if not isinstance(value, dict):
+            return
+        if any(field in value for field in ("sheet", "headers", "header_range", "data_range")):
+            headers = value.get("headers") if isinstance(value.get("headers"), list) else []
+            sections.append({
+                "id": str(value.get("id") or key or f"section_{len(sections) + 1}"),
+                "name": str(value.get("name") or value.get("id") or key or "Unnamed section"),
+                "description": str(value.get("description") or ""),
+                "sheet": str(value.get("sheet") or ""),
+                "headers": [siflex_header_summary(item) for item in headers if isinstance(item, dict)],
+            })
+            return
+        for child_key, child in value.items():
+            visit(child, str(child_key))
+
+    visit(payload)
+    return sections
+
+
+def flatten_siflex_headers(headers: list[dict]):
+    for header in headers:
+        yield header
+        yield from flatten_siflex_headers(header.get("children", []))
+
+
+def siflex_validation(source_path: Path | None, sections: list[dict], yaml_path: Path) -> dict:
+    method = "SiFlex structure.yaml claims checked against the source workbook"
+    if source_path is None or not source_path.is_file():
+        return {
+            "status": "unverifiable",
+            "method": method,
+            "reason": "The source workbook is unavailable, so the YAML structure cannot be checked against X.",
+            "artifacts": [yaml_path.relative_to(DATA).as_posix()],
+            "metrics": [],
+        }
+
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.utils.cell import range_boundaries
+
+        workbook = load_workbook(source_path, data_only=True, read_only=False)
+    except (OSError, ValueError, ImportError) as error:
+        return {
+            "status": "unverifiable",
+            "method": method,
+            "reason": f"The source workbook could not be inspected: {error}",
+            "artifacts": [yaml_path.relative_to(DATA).as_posix(), source_path.relative_to(DATA).as_posix()],
+            "metrics": [],
+        }
+
+    sheet_total = len(sections)
+    sheet_matches = 0
+    range_total = 0
+    range_matches = 0
+    data_total = 0
+    populated_data = 0
+    label_total = 0
+    label_matches = 0
+    issues = []
+
+    try:
+        for section in sections:
+            sheet_name = section.get("sheet", "")
+            worksheet = workbook[sheet_name] if sheet_name in workbook.sheetnames else None
+            if worksheet is None:
+                issues.append(f'Sheet "{sheet_name or "(missing)"}" is not present in X.')
+            else:
+                sheet_matches += 1
+
+            for header in flatten_siflex_headers(section.get("headers", [])):
+                header_label = str(header.get("label") or header.get("id") or "Unnamed field")
+                header_range = header.get("headerRange")
+                data_range = header.get("dataRange")
+                parsed_ranges = {}
+
+                for range_kind, raw_range in (("header", header_range), ("data", data_range)):
+                    range_total += 1
+                    if range_kind == "data":
+                        data_total += 1
+                    try:
+                        bounds = range_boundaries(str(raw_range)) if raw_range else None
+                    except ValueError:
+                        bounds = None
+                    valid = bool(
+                        worksheet and bounds
+                        and bounds[0] >= 1 and bounds[1] >= 1
+                        and bounds[2] <= worksheet.max_column and bounds[3] <= worksheet.max_row
+                    )
+                    if not valid:
+                        issues.append(f'{header_label}: {range_kind}_range "{raw_range or "(missing)"}" is invalid for sheet "{sheet_name}".')
+                        continue
+                    range_matches += 1
+                    parsed_ranges[range_kind] = bounds
+
+                    if range_kind == "data":
+                        min_column, min_row, max_column, max_row = bounds
+                        populated = any(
+                            worksheet.cell(row=row, column=column).value not in (None, "")
+                            for row in range(min_row, max_row + 1)
+                            for column in range(min_column, max_column + 1)
+                        )
+                        if populated:
+                            populated_data += 1
+                        else:
+                            issues.append(f'{header_label}: data_range {raw_range} contains no values in X.')
+
+                normalized_label = normalized_structure_text(header_label)
+                if normalized_label:
+                    label_total += 1
+                    bounds = parsed_ranges.get("header")
+                    cell_labels = []
+                    if worksheet and bounds:
+                        min_column, min_row, max_column, max_row = bounds
+                        cell_labels = [
+                            normalized_structure_text(worksheet.cell(row=row, column=column).value)
+                            for row in range(min_row, max_row + 1)
+                            for column in range(min_column, max_column + 1)
+                        ]
+                    aligned = any(
+                        cell_label and (normalized_label in cell_label or cell_label in normalized_label)
+                        for cell_label in cell_labels
+                    )
+                    if aligned:
+                        label_matches += 1
+                    else:
+                        issues.append(f'{header_label}: label does not align with header_range {header_range or "(missing)"}.')
+    finally:
+        workbook.close()
+
+    scores = {
+        "sheets": sheet_matches / max(1, sheet_total),
+        "ranges": range_matches / max(1, range_total),
+        "populatedData": populated_data / max(1, data_total),
+        "headerAlignment": label_matches / max(1, label_total),
+    }
+    valid = bool(
+        sections and label_total
+        and scores["sheets"] == 1
+        and scores["ranges"] == 1
+        and scores["populatedData"] >= 0.50
+        and scores["headerAlignment"] >= 0.60
+    )
+    return {
+        "status": "validated" if valid else "invalid",
+        "method": method,
+        "description": "Every referenced sheet and range exists; at least 50% of data ranges contain values; at least 60% of YAML labels align with their declared workbook headers.",
+        **{key: round(value, 4) for key, value in scores.items()},
+        "metrics": [
+            {"key": "sheets", "label": "Sheets", "value": round(scores["sheets"], 4), "detail": f"{sheet_matches}/{sheet_total}"},
+            {"key": "ranges", "label": "Ranges", "value": round(scores["ranges"], 4), "detail": f"{range_matches}/{range_total}"},
+            {"key": "populatedData", "label": "Data populated", "value": round(scores["populatedData"], 4), "detail": f"{populated_data}/{data_total}"},
+            {"key": "headerAlignment", "label": "Header alignment", "value": round(scores["headerAlignment"], 4), "detail": f"{label_matches}/{label_total}"},
+        ],
+        "issues": issues[:12],
+        "artifacts": [yaml_path.relative_to(DATA).as_posix(), source_path.relative_to(DATA).as_posix()],
+    }
+
+
+@lru_cache(maxsize=64)
+def yaml_structure_summary_cached(
+    yaml_path_string: str,
+    yaml_modified_ns: int,
+    yaml_size: int,
+    source_path_string: str,
+    source_modified_ns: int,
+    source_size: int,
+) -> dict:
+    import yaml
+
+    yaml_path = Path(yaml_path_string)
+    source_path = Path(source_path_string) if source_path_string else None
+    try:
+        payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, UnicodeError) as error:
+        raise ValueError(f"Invalid YAML: {error}") from error
+    sections = siflex_structure_sections(payload)
+    headers = [header for section in sections for header in flatten_siflex_headers(section.get("headers", []))]
+    return {
+        "title": yaml_path.name,
+        "path": yaml_path.relative_to(DATA).as_posix(),
+        "sectionCount": len(sections),
+        "headerCount": len(headers),
+        "sheets": list(dict.fromkeys(section.get("sheet", "") for section in sections if section.get("sheet"))),
+        "sections": sections,
+        "validation": siflex_validation(source_path, sections, yaml_path),
+    }
+
+
+def yaml_structure_summary(yaml_path: Path, source_path: Path | None = None) -> dict:
+    yaml_stat = yaml_path.stat()
+    source_stat = source_path.stat() if source_path and source_path.is_file() else None
+    return copy.deepcopy(yaml_structure_summary_cached(
+        str(yaml_path),
+        yaml_stat.st_mtime_ns,
+        yaml_stat.st_size,
+        str(source_path) if source_stat else "",
+        source_stat.st_mtime_ns if source_stat else 0,
+        source_stat.st_size if source_stat else 0,
+    ))
+
+
 def tabular_local_detail(path: Path) -> dict:
     return {"path": path.relative_to(DATA).as_posix(), "available": path.exists()}
 
@@ -1287,6 +1520,274 @@ def build_tabular_models_index() -> dict:
     }
 
 
+def normalized_validation_cell(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        text = format(value, ".12g")
+    else:
+        text = str(value)
+    return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip().casefold()
+
+
+@lru_cache(maxsize=128)
+def workbook_validation_matrices(path_string: str, modified_ns: int, size: int, expand_merged: bool) -> tuple[tuple[tuple[str, ...], ...], ...]:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path_string, data_only=True, read_only=False)
+    matrices = []
+    try:
+        for sheet in workbook.worksheets:
+            matrix = [
+                [normalized_validation_cell(sheet.cell(row=row, column=column).value) for column in range(1, sheet.max_column + 1)]
+                for row in range(1, sheet.max_row + 1)
+            ]
+            if expand_merged:
+                for merged in sheet.merged_cells.ranges:
+                    value = matrix[merged.min_row - 1][merged.min_col - 1]
+                    for row_index in range(merged.min_row - 1, merged.max_row):
+                        for column_index in range(merged.min_col - 1, merged.max_col):
+                            matrix[row_index][column_index] = value
+            matrices.append(tuple(tuple(row) for row in matrix))
+    finally:
+        workbook.close()
+    return tuple(matrices)
+
+
+def workbook_matrices(path: Path, expand_merged: bool = False) -> list[list[list[str]]]:
+    stat = path.stat()
+    return [
+        [list(row) for row in matrix]
+        for matrix in workbook_validation_matrices(str(path), stat.st_mtime_ns, stat.st_size, expand_merged)
+    ]
+
+
+def markdown_table_matrices(text: str) -> list[list[list[str]]]:
+    tables = []
+    current = []
+    for raw_line in text.splitlines() + [""]:
+        line = raw_line.strip()
+        if line.startswith("|") and line.endswith("|"):
+            cells = [normalized_validation_cell(cell) for cell in line[1:-1].split("|")]
+            if cells and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells):
+                continue
+            current.append(cells)
+        elif current:
+            tables.append(current)
+            current = []
+    return tables
+
+
+def validation_profile(matrices: list[list[list[str]]]) -> tuple[Counter, Counter]:
+    values = Counter()
+    rows = Counter()
+    for matrix in matrices:
+        for row in matrix:
+            normalized = tuple(value for value in (normalized_validation_cell(cell) for cell in row) if value)
+            if not normalized:
+                continue
+            rows[normalized] += 1
+            values.update(normalized)
+    return values, rows
+
+
+def validation_scores(source_matrices: list[list[list[str]]], representation_matrices: list[list[list[str]]]) -> dict:
+    source_values, source_rows = validation_profile(source_matrices)
+    representation_values, representation_rows = validation_profile(representation_matrices)
+    shared_values = sum((source_values & representation_values).values())
+    shared_rows = sum((source_rows & representation_rows).values())
+    return {
+        "coverage": shared_values / max(1, sum(source_values.values())),
+        "precision": shared_values / max(1, sum(representation_values.values())),
+        "rowCoverage": shared_rows / max(1, sum(source_rows.values())),
+    }
+
+
+def representation_is_valid(scores: dict) -> bool:
+    return scores["coverage"] >= 0.95 and scores["precision"] >= 0.75 and scores["rowCoverage"] >= 0.80
+
+
+def best_sheet_validation(source_sheets: list[list[list[str]]], representation: list[list[list[str]]]) -> tuple[dict, int]:
+    candidates = [(validation_scores([sheet], representation), index) for index, sheet in enumerate(source_sheets)]
+    return max(candidates, key=lambda item: (item[0]["rowCoverage"], item[0]["coverage"], item[0]["precision"]), default=({"coverage": 0, "precision": 0, "rowCoverage": 0}, -1))
+
+
+def validate_graphotter_representation(record: dict, source_path: Path, z_paths: list[Path]) -> dict:
+    table_path = next((path for path in z_paths if path.suffix.lower() == ".json"), None)
+    if table_path is None:
+        return {"status": "unverifiable", "reason": "The saved Z contains embeddings but no recoverable table content."}
+    try:
+        payload = json.loads(table_path.read_text(encoding="utf-8"))
+        texts = payload.get("texts") if isinstance(payload.get("texts"), list) else []
+        representation = []
+        if payload.get("title"):
+            representation.append([[normalized_validation_cell(payload["title"])]] )
+        representation.append([[normalized_validation_cell(cell) for cell in row] for row in texts])
+        scores, sheet_index = best_sheet_validation(workbook_matrices(source_path), representation)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {"status": "invalid", "reason": "The GraphOtter table representation could not be parsed."}
+    return validation_result("GraphOtter JSON vs source workbook", scores, sheet_index, [table_path])
+
+
+def validate_straptor_representation(record: dict, source_path: Path, z_paths: list[Path]) -> dict:
+    html_path = next((path for path in z_paths if path.suffix.lower() == ".html"), None)
+    if html_path is None:
+        return {"status": "unverifiable", "reason": "No converted table HTML is available for content validation."}
+    try:
+        parser = CompactHtmlTableParser()
+        parser.feed(html_path.read_text(encoding="utf-8", errors="replace"))
+        representation = [parser.matrix()]
+        source_sheets = workbook_matrices(source_path, expand_merged=True)
+        if parser.caption:
+            caption = normalized_validation_cell(parser.caption)
+            for sheet in source_sheets:
+                if sheet and caption in {cell for cell in sheet[0] if cell}:
+                    sheet.pop(0)
+        scores, sheet_index = best_sheet_validation(source_sheets, representation)
+    except (OSError, ValueError):
+        return {"status": "invalid", "reason": "The ST-Raptor HTML representation could not be parsed."}
+    return validation_result("ST-Raptor HTML vs source workbook", scores, sheet_index, [html_path])
+
+
+def validate_spreadsheet_agent_representation(record: dict, source_path: Path, z_paths: list[Path]) -> dict:
+    representation = []
+    parsed_paths = []
+    seen_tables = set()
+    for path in z_paths:
+        if path.suffix.lower() != ".json":
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
+        tables = markdown_table_matrices(str(payload.get("structure") or ""))
+        if tables:
+            for table in tables:
+                signature = tuple(tuple(row) for row in table)
+                if signature not in seen_tables:
+                    seen_tables.add(signature)
+                    representation.append(table)
+            parsed_paths.append(path)
+    if not representation:
+        return {"status": "unverifiable", "reason": "No table content could be parsed from the SpreadsheetAgent structures."}
+    scores = validation_scores(workbook_matrices(source_path), representation)
+    return validation_result("SpreadsheetAgent Markdown vs source workbook", scores, None, parsed_paths)
+
+
+def validation_result(method: str, scores: dict, sheet_index: int | None, paths: list[Path]) -> dict:
+    return {
+        "status": "validated" if representation_is_valid(scores) else "invalid",
+        "method": method,
+        "coverage": round(scores["coverage"], 4),
+        "precision": round(scores["precision"], 4),
+        "rowCoverage": round(scores["rowCoverage"], 4),
+        "matchedSheet": sheet_index,
+        "artifacts": [path.relative_to(DATA).as_posix() for path in paths],
+    }
+
+
+def validate_record_representation(record: dict) -> dict:
+    artifacts = record.get("artifacts") if isinstance(record.get("artifacts"), dict) else {}
+    source_relative = next((path for path in artifacts.get("input", []) if str(path).lower().endswith(".xlsx")), "")
+    source_path = DATA / source_relative
+    z_paths = [DATA / path for path in artifacts.get("interpreted", []) if (DATA / path).is_file()]
+    if not source_relative or not source_path.is_file() or not z_paths:
+        return {"status": "unverifiable", "reason": "The source workbook or interpreted representation is missing."}
+    validators = {
+        "GraphOtter": validate_graphotter_representation,
+        "ST-raptor": validate_straptor_representation,
+        "SpreadsheetAgent": validate_spreadsheet_agent_representation,
+    }
+    validator = validators.get(record.get("pipeline"))
+    return validator(record, source_path, z_paths) if validator else {"status": "unverifiable", "reason": "No validator is available for this pipeline."}
+
+
+def validate_siflex_representation(record: dict) -> dict:
+    components = record.get("components") if isinstance(record.get("components"), dict) else {}
+
+    def available_path(stage: str, suffixes: tuple[str, ...]) -> Path | None:
+        paths = components.get(stage, {}).get("paths", []) if isinstance(components.get(stage), dict) else []
+        for detail in paths:
+            if not isinstance(detail, dict) or not detail.get("available"):
+                continue
+            path = DATA / str(detail.get("path") or "")
+            if path.is_file() and path.suffix.lower() in suffixes:
+                return path
+        return None
+
+    source_path = available_path("X", (".xlsx", ".xlsm"))
+    yaml_path = available_path("Z", (".yaml", ".yml"))
+    if source_path is None or yaml_path is None:
+        return {"status": "unverifiable", "reason": "The SiFlex source workbook or structure.yaml artifact is missing."}
+    try:
+        return yaml_structure_summary(yaml_path, source_path)["validation"]
+    except (OSError, ValueError, ImportError) as error:
+        return {"status": "unverifiable", "reason": f"The SiFlex structure could not be validated: {error}"}
+
+
+def normalized_index_answer(value) -> str:
+    if isinstance(value, list):
+        text = ", ".join(str(item).strip() for item in value)
+    else:
+        text = "" if value is None else str(value).strip()
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def build_mismatch_index(index_payload: dict | None = None) -> dict:
+    payload = index_payload or load_index()
+    records = []
+    checked = Counter()
+    for pipeline in ("GraphOtter", "SpreadsheetAgent", "ST-raptor"):
+        for dataset, items in payload.get("records", {}).get(pipeline, {}).items():
+            for record in items:
+                artifacts = record.get("artifacts") if isinstance(record.get("artifacts"), dict) else {}
+                candidate = (
+                    record.get("status") == "wrong"
+                    and record.get("prediction") is not None
+                    and record.get("gold") is not None
+                    and normalized_index_answer(record.get("prediction")) != normalized_index_answer(record.get("gold"))
+                    and bool(artifacts.get("workflow"))
+                    and bool(artifacts.get("output"))
+                )
+                if not candidate:
+                    continue
+                validation = validate_record_representation(record)
+                checked[validation["status"]] += 1
+                if validation["status"] == "validated":
+                    records.append({"id": record["id"], "validation": validation})
+    for record in build_siflex_index().get("records", []):
+        components = record.get("components") if isinstance(record.get("components"), dict) else {}
+        workflow_paths = components.get("W", {}).get("paths", []) if isinstance(components.get("W"), dict) else []
+        output_paths = components.get("Y", {}).get("paths", []) if isinstance(components.get("Y"), dict) else []
+        workflow_complete = any(isinstance(item, dict) and item.get("available") for item in workflow_paths)
+        result_saved = any(
+            isinstance(item, dict) and item.get("available") and str(item.get("path", "")).endswith("/result.json")
+            for item in output_paths
+        )
+        candidate = (
+            record.get("status") == "wrong"
+            and record.get("prediction") is not None
+            and record.get("gold") is not None
+            and normalized_index_answer(record.get("prediction")) != normalized_index_answer(record.get("gold"))
+            and workflow_complete
+            and result_saved
+        )
+        if not candidate:
+            continue
+        validation = validate_siflex_representation(record)
+        checked[validation["status"]] += 1
+        if validation["status"] == "validated":
+            records.append({"id": record["id"], "validation": validation})
+    counts = Counter(item["id"].split(":", 1)[0] for item in records)
+    return {
+        "version": 2,
+        "criteria": "Z content validated against X; W completed; normalized Y differs from Y*.",
+        "counts": dict(counts),
+        "checked": dict(checked),
+        "records": records,
+    }
+
+
 def build_index() -> dict:
     indexed = {}
     for pipeline, datasets in load_catalog().items():
@@ -1303,6 +1804,7 @@ def build_index() -> dict:
     WEB_INDEX_PATH.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     WEB_SIFLEX_INDEX_PATH.write_text(json.dumps(build_siflex_index(), ensure_ascii=False), encoding="utf-8")
     WEB_TABULAR_MODELS_INDEX_PATH.write_text(json.dumps(build_tabular_models_index(), ensure_ascii=False), encoding="utf-8")
+    WEB_MISMATCH_INDEX_PATH.write_text(json.dumps(build_mismatch_index(payload), ensure_ascii=False), encoding="utf-8")
     return payload
 
 
@@ -1833,6 +2335,26 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, MemoryError) as error:
                 self.send_json(500, {"error": f"Could not inspect this PKL: {error}"})
                 return
+        elif request.path == "/api/yaml-summary":
+            params = parse_qs(request.query)
+            relative = params.get("path", [""])[0]
+            path = self.data_path(relative)
+            source_relative = params.get("source", [""])[0]
+            source_path = self.data_path(source_relative) if source_relative else None
+            if path is None or (source_relative and source_path is None):
+                self.send_json(403, {"error": "The requested path is outside the data directory."})
+                return
+            if path.suffix.lower() not in {".yaml", ".yml"} or not path.is_file():
+                self.send_json(404, {"error": "The requested YAML artifact does not exist."})
+                return
+            if source_path and (source_path.suffix.lower() not in {".xlsx", ".xlsm"} or not source_path.is_file()):
+                self.send_json(404, {"error": "The requested source workbook does not exist."})
+                return
+            try:
+                payload = yaml_structure_summary(path, source_path)
+            except (OSError, ValueError, ImportError) as error:
+                self.send_json(500, {"error": f"Could not inspect this YAML structure: {error}"})
+                return
         elif request.path.startswith("/api/files/"):
             path = self.data_path(request.path.removeprefix("/api/files/"))
             if path is None:
@@ -1893,6 +2415,7 @@ def main():
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--build-index", action="store_true")
     parser.add_argument("--build-siflex-index", action="store_true")
+    parser.add_argument("--build-mismatch-index", action="store_true")
     parser.add_argument("--ready-file", type=Path)
     args = parser.parse_args()
     if args.build_index:
@@ -1903,6 +2426,9 @@ def main():
         return
     if args.build_siflex_index:
         WEB_SIFLEX_INDEX_PATH.write_text(json.dumps(build_siflex_index(), ensure_ascii=False), encoding="utf-8")
+        return
+    if args.build_mismatch_index:
+        WEB_MISMATCH_INDEX_PATH.write_text(json.dumps(build_mismatch_index(), ensure_ascii=False), encoding="utf-8")
         return
     print("Preparing QA index...", flush=True)
     load_index()

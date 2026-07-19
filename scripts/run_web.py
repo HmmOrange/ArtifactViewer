@@ -21,6 +21,7 @@ def main() -> int:
     index_path = web / "src" / "qa-index.json"
     siflex_index_path = web / "src" / "siflex-index.json"
     tabular_models_index_path = web / "src" / "tabular-models-index.json"
+    mismatch_index_path = web / "src" / "mismatch-index.json"
     golden_cases_path = root / "data" / "Datasets" / "SiFlex" / "golden_tests" / "compiled" / "golden_cases.json"
     siflex_needs_refresh = (
         golden_cases_path.is_file()
@@ -33,14 +34,21 @@ def main() -> int:
         not index_path.exists()
         or not siflex_index_path.exists()
         or not tabular_models_index_path.exists()
+        or not mismatch_index_path.exists()
     ):
         indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-index"], cwd=root)
         if indexed.returncode:
             return indexed.returncode
-    elif siflex_needs_refresh:
-        indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-siflex-index"], cwd=root)
-        if indexed.returncode:
-            return indexed.returncode
+    else:
+        if siflex_needs_refresh:
+            indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-siflex-index"], cwd=root)
+            if indexed.returncode:
+                return indexed.returncode
+        mismatch_sources = (index_path, siflex_index_path)
+        if siflex_needs_refresh or any(path.stat().st_mtime_ns > mismatch_index_path.stat().st_mtime_ns for path in mismatch_sources):
+            indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-mismatch-index"], cwd=root)
+            if indexed.returncode:
+                return indexed.returncode
 
     api = subprocess.Popen([sys.executable, "-m", "api.server"], cwd=root)
     try:

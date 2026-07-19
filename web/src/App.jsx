@@ -6,11 +6,14 @@ import remarkGfm from 'remark-gfm'
 import qaIndex from './qa-index.json'
 import siflexIndex from './siflex-index.json'
 import tabularModelsIndex from './tabular-models-index.json'
+import mismatchIndex from './mismatch-index.json'
 
 const PAGE_SIZE = 40
 const PIPELINES = ['GraphOtter', 'SpreadsheetAgent', 'ST-raptor']
 const DATASETS = ['HiTab', 'MultiHiertt']
 const DATASET_LABELS = { HiTab: 'HiTab', MultiHiertt: 'MultiHiertt / MulHi' }
+const MISMATCH_PIPELINES = [...PIPELINES, 'TableAgent-SIFLEX']
+const MISMATCH_DATASETS = [...DATASETS, 'SiFlex']
 const STATUS_LABELS = { correct: 'Correct', wrong: 'Wrong', error: 'Error' }
 const PIPELINE_PAPERS = {
   GraphOtter: { href: 'https://arxiv.org/pdf/2412.01230', venue: 'arXiv 2412.01230' },
@@ -417,6 +420,59 @@ function PklInspector({ paths = [], recordKey = '', contextPaths = [], represent
   )
 }
 
+function YamlStructureInspector({ paths = [], recordKey = '', panelSpan = 1, onPanelSpanChange }) {
+  const candidates = paths.map((item) => typeof item === 'string' ? { path: item, available: true } : item).filter((item) => item.available && /\.ya?ml$/i.test(item.path))
+  const [content, setContent] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [expanded, setExpanded] = useState(true)
+  const requestId = useRef(0)
+  const path = candidates[0]?.path || ''
+
+  useEffect(() => {
+    if (!path) return
+    const currentRequest = ++requestId.current
+    const controller = new AbortController()
+    setLoading(true)
+    setError('')
+    setContent('')
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/')
+    fetch(`/api/files/${encodedPath}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Could not read this structure.yaml.')
+        const text = await response.text()
+        if (currentRequest === requestId.current) setContent(text)
+      })
+      .catch((requestError) => {
+        if (requestError.name !== 'AbortError' && currentRequest === requestId.current) setError(requestError.message)
+      })
+      .finally(() => {
+        if (currentRequest === requestId.current) setLoading(false)
+      })
+    return () => controller.abort()
+  }, [recordKey, path])
+
+  if (!candidates.length) return null
+  return <div className="yaml-inspector">
+    <div className="yaml-inspector-head">
+      <div><span>SiFlex Z artifact</span><strong>structure.yaml</strong></div>
+      <div className="yaml-inspector-actions">
+        <div className="pkl-panel-width" aria-label="Preview panel width">
+          <button type="button" className="secondary" onClick={() => onPanelSpanChange?.(Math.max(1, panelSpan - 1))} disabled={panelSpan <= 1} title="Narrow panel">-</button>
+          <small>{panelSpan} col</small>
+          <button type="button" className="secondary" onClick={() => onPanelSpanChange?.(Math.min(3, panelSpan + 1))} disabled={panelSpan >= 3} title="Widen panel">+</button>
+        </div>
+        <button type="button" className="secondary" onClick={() => setExpanded((value) => !value)}>{expanded ? 'Collapse' : 'Show YAML'}</button>
+      </div>
+    </div>
+    {expanded && <>
+      {loading && <div className="yaml-state">Reading structure.yaml...</div>}
+      {error && <div className="yaml-state error">{error}</div>}
+      {content && <><code className="yaml-path">{path}</code><pre className="yaml-source">{content}</pre></>}
+    </>}
+  </div>
+}
+
 function PathList({ paths = [], onReveal, busyPath, emptyText }) {
   if (!paths.length) return <p className="path-empty">{emptyText || 'No file was recorded for this stage.'}</p>
 
@@ -524,7 +580,7 @@ function WorkflowTimeline({ record, onReveal, busyPath }) {
 function TraceFlow({ record }) {
   const [busyPath, setBusyPath] = useState('')
   const [notice, setNotice] = useState(null)
-  const [zSpan, setZSpan] = useState(record.pipeline === 'GraphOtter' ? 2 : 1)
+  const [zSpan, setZSpan] = useState(['GraphOtter', 'TableAgent-SIFLEX'].includes(record.pipeline) ? 2 : 1)
   const artifacts = record.artifacts || {}
   const inputPaths = artifacts.input || []
   const queryPaths = inputPaths.filter((path) => /\.(?:jsonl?|csv)$/i.test(path))
@@ -536,7 +592,7 @@ function TraceFlow({ record }) {
   const interpretedPaths = componentPaths('Z', artifacts.interpreted || [])
 
   useEffect(() => {
-    setZSpan(record.pipeline === 'GraphOtter' ? 2 : 1)
+    setZSpan(['GraphOtter', 'TableAgent-SIFLEX'].includes(record.pipeline) ? 2 : 1)
   }, [record.pipeline])
 
   async function reveal(path) {
@@ -580,6 +636,7 @@ function TraceFlow({ record }) {
         <TraceNode symbol="X" title="Raw data" description="The original table, workbook, or source evidence." tone="raw" paths={componentPaths('X', rawPaths.length ? rawPaths : inputPaths)} onReveal={reveal} busyPath={busyPath} />
         <TraceNode symbol="Z" title="Interpreted representation" description={stageCopy.Z} tone="interpreted" paths={interpretedPaths} onReveal={reveal} busyPath={busyPath} span={zSpan}>
           <PklInspector paths={interpretedPaths} contextPaths={[...interpretedPaths, ...inputPaths]} representation={record.representation || {}} recordKey={record.id} panelSpan={zSpan} onPanelSpanChange={setZSpan} />
+          <YamlStructureInspector paths={interpretedPaths} recordKey={record.id} panelSpan={zSpan} onPanelSpanChange={setZSpan} />
         </TraceNode>
         <TraceNode symbol="W" title="Solving workflow" description={stageCopy.W} tone="workflow" paths={componentPaths('W', artifacts.workflow || [])} onReveal={reveal} busyPath={busyPath} span={STRUCTURED_WORKFLOW_PIPELINES.has(record.pipeline) ? 3 : 1}>
           {STRUCTURED_WORKFLOW_PIPELINES.has(record.pipeline) && <WorkflowTimeline record={record} onReveal={reveal} busyPath={busyPath} />}
@@ -596,6 +653,32 @@ function TraceFlow({ record }) {
   )
 }
 
+function MismatchQualification({ record }) {
+  const validation = record.representationValidation || {}
+  const metrics = validation.metrics?.length ? validation.metrics : [
+    { label: 'Cells', value: validation.coverage || 0 },
+    { label: 'Rows', value: validation.rowCoverage || 0 },
+    { label: 'Precision', value: validation.precision || 0 },
+  ]
+  const validationSummary = metrics.map((metric) => `${Math.round(metric.value * 100)}% ${metric.label.toLowerCase()}`).join(' / ')
+  return (
+    <section className="mismatch-proof" aria-label="Mismatch qualification">
+      <header>
+        <div><span>Validated mismatch</span><strong>Z matches X and W completed, but Y differs from Y*</strong></div>
+        <small>{record.pipeline} / {DATASET_LABELS[record.dataset] || record.dataset}</small>
+      </header>
+      <div className="mismatch-proof-flow">
+        <article className="ready"><b>Z</b><div><strong>{record.pipeline === 'TableAgent-SIFLEX' ? 'Structure validated against X' : 'Content validated against X'}</strong><small>{validationSummary}</small></div></article>
+        <i>-&gt;</i>
+        <article className="ready"><b>W</b><div><strong>Workflow completed</strong><small>Execution produced a non-error Y</small></div></article>
+        <i>-&gt;</i>
+        <article className="mismatch"><b>Y</b><div><strong>Answer mismatch</strong><small>Y does not equal Y*</small></div></article>
+      </div>
+      <footer><span>Validation method</span><code>{validation.method}</code></footer>
+    </section>
+  )
+}
+
 function App() {
   const [viewMode, setViewMode] = useState('benchmarks')
   const [pipeline, setPipeline] = useState('ST-raptor')
@@ -605,9 +688,28 @@ function App() {
   const [query, setQuery] = useState('')
   const [tabularModel, setTabularModel] = useState(tabularModelsIndex.models[0]?.id || '')
   const [tabularVerdict, setTabularVerdict] = useState('all')
+  const [mismatchPipeline, setMismatchPipeline] = useState('all')
+  const [mismatchDataset, setMismatchDataset] = useState('all')
+
+  const mismatchRecords = useMemo(() => {
+    const validations = new Map(mismatchIndex.records.map((item) => [item.id, item.validation]))
+    const benchmarkRecords = PIPELINES.flatMap((pipelineName) => (
+      DATASETS.flatMap((datasetName) => qaIndex.records[pipelineName]?.[datasetName] || [])
+    ))
+    return [...benchmarkRecords, ...siflexIndex.records].filter((record) => validations.has(record.id)).map((record) => ({
+      ...record,
+      representationValidation: validations.get(record.id),
+    }))
+  }, [])
 
   const allRecords = useMemo(() => {
     if (viewMode === 'siflex') return siflexIndex.records
+    if (viewMode === 'mismatches') {
+      return mismatchRecords.filter((record) => (
+        (mismatchPipeline === 'all' || record.pipeline === mismatchPipeline)
+        && (mismatchDataset === 'all' || record.dataset === mismatchDataset)
+      ))
+    }
     if (viewMode === 'tabular') {
       return tabularModelsIndex.records.filter((record) => (
         (!tabularModel || record.modelId === tabularModel)
@@ -615,7 +717,7 @@ function App() {
       ))
     }
     return qaIndex.records[pipeline]?.[dataset] || []
-  }, [viewMode, pipeline, dataset, tabularModel, tabularVerdict])
+  }, [viewMode, pipeline, dataset, tabularModel, tabularVerdict, mismatchRecords, mismatchPipeline, mismatchDataset])
   const filteredRecords = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     if (!normalizedQuery) return allRecords
@@ -632,7 +734,7 @@ function App() {
   useEffect(() => {
     setVisibleCount(PAGE_SIZE)
     setSelectedId('')
-  }, [viewMode, pipeline, dataset, tabularModel, tabularVerdict, query])
+  }, [viewMode, pipeline, dataset, tabularModel, tabularVerdict, mismatchPipeline, mismatchDataset, query])
 
   function changePipeline(event) {
     setPipeline(event.target.value)
@@ -651,6 +753,8 @@ function App() {
     ? 'TableAgent / SiFlex'
     : viewMode === 'tabular'
       ? selectedTabularModel?.label || 'Tabular models'
+      : viewMode === 'mismatches'
+        ? 'Completed answer mismatches'
       : `${pipeline} / ${DATASET_LABELS[dataset]}`
 
   function handleScroll(event) {
@@ -675,11 +779,12 @@ function App() {
 
       <nav className="view-tabs" aria-label="Viewer sections">
         <button type="button" className={viewMode === 'benchmarks' ? 'active' : ''} onClick={() => changeView('benchmarks')}><b>Benchmark pipelines</b><span>GraphOtter, SpreadsheetAgent, ST-Raptor</span></button>
+        <button type="button" className={viewMode === 'mismatches' ? 'active' : ''} onClick={() => changeView('mismatches')}><b>Answer mismatches</b><span>Z validated against X, W completed, Y differs from Y*</span></button>
         <button type="button" className={viewMode === 'siflex' ? 'active' : ''} onClick={() => changeView('siflex')}><b>TableAgent / SIFLEX</b><span>{siflexIndex.run.name}</span></button>
         <button type="button" className={viewMode === 'tabular' ? 'active' : ''} onClick={() => changeView('tabular')}><b>Tabular models</b><span>Runs matched to uploaded Data Lake files</span></button>
       </nav>
 
-      <section className={`filter-bar ${viewMode === 'siflex' ? 'siflex-filter' : ''} ${viewMode === 'tabular' ? 'tabular-filter' : ''}`} aria-label="Filters">
+      <section className={`filter-bar ${viewMode === 'siflex' ? 'siflex-filter' : ''} ${viewMode === 'tabular' ? 'tabular-filter' : ''} ${viewMode === 'mismatches' ? 'mismatch-filter' : ''}`} aria-label="Filters">
         {viewMode === 'benchmarks' ? <>
           <div className="filter-copy pipeline-reference">
             <span>Pipeline reference</span>
@@ -693,6 +798,16 @@ function App() {
           </SelectField>
           <SelectField label="Dataset" value={dataset} onChange={(event) => setDataset(event.target.value)}>
             {DATASETS.map((name) => <option key={name} value={name}>{DATASET_LABELS[name]}</option>)}
+          </SelectField>
+        </> : viewMode === 'mismatches' ? <>
+          <div className="filter-copy mismatch-filter-copy"><span>Validated mismatch cases</span><strong>{allRecords.length} runs with Z matching X and W completed</strong></div>
+          <SelectField label="Pipeline" value={mismatchPipeline} onChange={(event) => setMismatchPipeline(event.target.value)}>
+            <option value="all">All pipelines</option>
+            {MISMATCH_PIPELINES.map((name) => <option key={name} value={name}>{name}</option>)}
+          </SelectField>
+          <SelectField label="Dataset" value={mismatchDataset} onChange={(event) => setMismatchDataset(event.target.value)}>
+            <option value="all">All datasets</option>
+            {MISMATCH_DATASETS.map((name) => <option key={name} value={name}>{DATASET_LABELS[name] || name}</option>)}
           </SelectField>
         </> : viewMode === 'siflex' ? <>
           <div className="filter-copy"><span>SIFLEX run</span><strong>{siflexIndex.run.name}</strong></div>
@@ -718,19 +833,15 @@ function App() {
       <section className="workspace">
         <aside className="qa-panel">
           <div className="panel-title">
-            <div><span>Browse the run</span><h2>{viewMode === 'siflex' ? 'SIFLEX cases' : viewMode === 'tabular' ? 'Model cases' : 'QA pairs'}</h2><p>Select a question to open its full trace.</p></div>
+            <div><span>Browse the run</span><h2>{viewMode === 'siflex' ? 'SIFLEX cases' : viewMode === 'tabular' ? 'Model cases' : viewMode === 'mismatches' ? 'Answer mismatches' : 'QA pairs'}</h2><p>{viewMode === 'mismatches' ? 'Every Z is validated against X before the answer mismatch is included.' : 'Select a question to open its full trace.'}</p></div>
           </div>
-          <div className="list-count">
-            <StatusMark status="correct" count={totals.correct} />
-            <StatusMark status="wrong" count={totals.wrong} />
-            <StatusMark status="error" count={totals.error} />
-          </div>
+          {viewMode === 'mismatches' ? <div className="mismatch-list-criteria"><span><b>Z</b> matches X</span><span><b>W</b> completed</span><span className="different"><b>Y</b> != Y*</span></div> : <div className="list-count"><StatusMark status="correct" count={totals.correct} /><StatusMark status="wrong" count={totals.wrong} /><StatusMark status="error" count={totals.error} /></div>}
           <div className="qa-list" onScroll={handleScroll} tabIndex={0} aria-label="Question results">
             {!records.length && <div className="empty-state">No QA pairs match this search.</div>}
             {records.map((record, index) => (
               <button className={`qa-item ${selected?.id === record.id ? 'active' : ''}`} key={record.id} onClick={() => setSelectedId(record.id)}>
                 <span className="qa-index">{String(index + 1).padStart(2, '0')}</span>
-                <span className="qa-question">{record.question}</span>
+                <span className="qa-item-copy"><span className="qa-question">{record.question}</span>{viewMode === 'mismatches' && <small>{record.pipeline} / {DATASET_LABELS[record.dataset] || record.dataset}</small>}</span>
                 <i className={`result-dot ${record.status}`} aria-label={record.status} />
               </button>
             ))}
@@ -743,6 +854,7 @@ function App() {
               <div><span>Selected result</span><strong>#{String(records.indexOf(selected) + 1).padStart(2, '0')}</strong></div>
               <StatusMark status={selected.status} label={selected.verdictLabel} />
             </div>
+            {viewMode === 'mismatches' && <MismatchQualification record={selected} />}
             <TraceFlow record={selected} />
             <footer><span>Source artifact</span><code>{selected.source}</code></footer>
           </> : <div className="result-empty"><span>-</span><h2>Select a QA pair</h2><p>The golden answer and prediction will appear here.</p></div>}
