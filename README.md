@@ -109,7 +109,15 @@ Then run `.venv\Scripts\Activate.ps1` again.
 
 ## 4. Run the web viewer
 
-Run the launcher from the repository root.
+Run the launcher from the repository root. The current directory must be the folder that contains `api`, `scripts`, `web`, and `data`.
+
+Important directory rule:
+
+- Run `python scripts/run_web.py` from `ArtifactViewer`.
+- Run `npm install` or `npm run dev` only from `ArtifactViewer/web`.
+- Do not run `npm install` directly from `ArtifactViewer`; there is no `package.json` in the repository root.
+
+For the normal setup, you do not need to run `npm install` manually. The Python launcher enters `web` and installs the frontend dependencies when needed.
 
 ### macOS or Linux
 
@@ -120,7 +128,14 @@ python scripts/run_web.py
 ### Windows
 
 ```powershell
+cd C:\path\to\ArtifactViewer
 python scripts\run_web.py
+```
+
+Before pressing Enter, the command prompt should end with `ArtifactViewer>`, not `ArtifactViewer\web>`:
+
+```text
+C:\path\to\ArtifactViewer>python scripts\run_web.py
 ```
 
 The launcher automatically:
@@ -172,6 +187,8 @@ npm install
 npm run dev -- --host 127.0.0.1
 ```
 
+The `cd web` step is required because [web/package.json](web/package.json) contains the frontend dependencies.
+
 Then open `http://127.0.0.1:8765`.
 
 ## Troubleshooting
@@ -198,6 +215,62 @@ Install Node.js 18 or newer, close and reopen the terminal, then verify:
 ```bash
 node --version
 npm --version
+```
+
+### `npm ERR! ENOENT: Could not read package.json`
+
+This error means `npm install` was run from the repository root:
+
+```text
+C:\path\to\ArtifactViewer>npm install
+```
+
+That location does not contain `package.json`. Move into `web` before running npm:
+
+```bat
+cd /d C:\path\to\ArtifactViewer\web
+npm install
+cd ..
+python scripts\run_web.py
+```
+
+The expected npm location is:
+
+```text
+C:\path\to\ArtifactViewer\web>npm install
+```
+
+### Vite reports `Failed to resolve import "react-markdown"`
+
+The frontend dependencies are missing or only partially installed. Stop the running viewer with `Ctrl+C`, then reinstall them inside `web`.
+
+Windows Command Prompt:
+
+```bat
+cd /d C:\path\to\ArtifactViewer\web
+npm install
+cd ..
+python scripts\run_web.py
+```
+
+If the same error remains, perform a clean installation:
+
+```bat
+cd /d C:\path\to\ArtifactViewer\web
+rmdir /s /q node_modules
+npm ci
+cd ..
+python scripts\run_web.py
+```
+
+Windows PowerShell clean installation:
+
+```powershell
+cd C:\path\to\ArtifactViewer\web
+Remove-Item -Recurse -Force node_modules
+npm ci
+cd ..
+python scripts\run_web.py
 ```
 
 ### A Python module is missing
