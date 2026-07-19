@@ -12,3 +12,6 @@ web/.verify/
 .vscode
 
 Log_Tabular_Models
+.venv
+web/src/*.json
+__MACOSX

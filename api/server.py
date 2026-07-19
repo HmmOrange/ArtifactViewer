@@ -1562,6 +1562,145 @@ def workbook_matrices(path: Path, expand_merged: bool = False) -> list[list[list
     ]
 
 
+def workbook_css_color(color) -> str | None:
+    if color is None:
+        return None
+    if color.type == "rgb" and color.rgb:
+        value = str(color.rgb)
+        if len(value) == 8:
+            if value[:2] == "00":
+                return None
+            value = value[2:]
+        return f"#{value[-6:]}"
+    if color.type == "indexed" and color.indexed is not None:
+        from openpyxl.styles.colors import COLOR_INDEX
+        try:
+            value = COLOR_INDEX[int(color.indexed)]
+            return f"#{value[-6:]}" if value and value[:2] != "00" else None
+        except (IndexError, TypeError, ValueError):
+            return None
+    theme_colors = {
+        0: "#FFFFFF", 1: "#000000", 2: "#E7E6E6", 3: "#44546A", 4: "#5B9BD5",
+        5: "#ED7D31", 6: "#A5A5A5", 7: "#FFC000", 8: "#4472C4", 9: "#70AD47",
+    }
+    return theme_colors.get(color.theme) if color.type == "theme" else None
+
+
+def workbook_border_css(side) -> str | None:
+    if side is None or not side.style:
+        return None
+    width = 3 if side.style == "thick" else 2 if "medium" in side.style else 1
+    line = "double" if side.style == "double" else "dashed" if side.style in {"dashed", "dotted", "dashDot", "dashDotDot", "mediumDashed", "mediumDashDot", "mediumDashDotDot"} else "solid"
+    return f"{width}px {line} {workbook_css_color(side.color) or '#B8BFBB'}"
+
+
+def workbook_cell_style(cell) -> dict:
+    style = {}
+    font = cell.font
+    fill = cell.fill
+    alignment = cell.alignment
+    if font.bold:
+        style["fontWeight"] = "700"
+    if font.italic:
+        style["fontStyle"] = "italic"
+    decorations = [name for enabled, name in ((font.underline, "underline"), (font.strike, "line-through")) if enabled]
+    if decorations:
+        style["textDecoration"] = " ".join(decorations)
+    if font.name:
+        style["fontFamily"] = str(font.name)
+    if font.sz:
+        style["fontSize"] = f"{float(font.sz) * 4 / 3:.2f}px"
+    font_color = workbook_css_color(font.color)
+    if font_color:
+        style["color"] = font_color
+    if fill.fill_type == "solid":
+        fill_color = workbook_css_color(fill.fgColor)
+        if fill_color:
+            style["backgroundColor"] = fill_color
+    horizontal = {"center": "center", "centerContinuous": "center", "right": "right", "left": "left", "justify": "justify", "distributed": "center"}.get(alignment.horizontal)
+    vertical = {"center": "middle", "top": "top", "bottom": "bottom", "justify": "middle", "distributed": "middle"}.get(alignment.vertical)
+    if horizontal:
+        style["textAlign"] = horizontal
+    if vertical:
+        style["verticalAlign"] = vertical
+    if alignment.wrap_text:
+        style["whiteSpace"] = "pre-wrap"
+    if alignment.indent:
+        style["paddingLeft"] = f"{8 + int(alignment.indent) * 12}px"
+    for key, side in (("borderTop", cell.border.top), ("borderRight", cell.border.right), ("borderBottom", cell.border.bottom), ("borderLeft", cell.border.left)):
+        border = workbook_border_css(side)
+        if border:
+            style[key] = border
+    return style
+
+
+@lru_cache(maxsize=64)
+def workbook_render_cached(path_string: str, modified_ns: int, size_bytes: int, sheet_index: int) -> dict:
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+
+    workbook = load_workbook(path_string, data_only=True, read_only=False)
+    try:
+        sheet_names = list(workbook.sheetnames)
+        if not sheet_names:
+            raise ValueError("The workbook contains no worksheets.")
+        sheet_index = min(max(0, sheet_index), len(sheet_names) - 1)
+        worksheet = workbook.worksheets[sheet_index]
+        row_limit = min(200, worksheet.max_row)
+        column_limit = min(60, worksheet.max_column)
+        merged_anchors = {}
+        merged_covered = set()
+        for merged in worksheet.merged_cells.ranges:
+            if merged.min_row > row_limit or merged.min_col > column_limit:
+                continue
+            max_row = min(merged.max_row, row_limit)
+            max_column = min(merged.max_col, column_limit)
+            merged_anchors[(merged.min_row, merged.min_col)] = {
+                "rowSpan": max_row - merged.min_row + 1,
+                "colSpan": max_column - merged.min_col + 1,
+            }
+            for row in range(merged.min_row, max_row + 1):
+                for column in range(merged.min_col, max_column + 1):
+                    if (row, column) != (merged.min_row, merged.min_col):
+                        merged_covered.add((row, column))
+        rows = []
+        for row in range(1, row_limit + 1):
+            cells = []
+            for column in range(1, column_limit + 1):
+                if (row, column) in merged_covered:
+                    continue
+                cell = worksheet.cell(row=row, column=column)
+                cells.append({
+                    "column": column,
+                    "value": compact_table_value(cell.value, 500),
+                    "style": workbook_cell_style(cell),
+                    **merged_anchors.get((row, column), {}),
+                })
+            height = worksheet.row_dimensions[row].height
+            rows.append({"number": row, "height": float(height) * 4 / 3 if height else None, "cells": cells})
+        columns = []
+        for column in range(1, column_limit + 1):
+            label = get_column_letter(column)
+            width = worksheet.column_dimensions[label].width
+            columns.append({"label": label, "width": min(420, max(44, float(width or 13) * 7 + 7))})
+        return {
+            "title": Path(path_string).name,
+            "fileSize": size_bytes,
+            "sheetNames": sheet_names,
+            "sheetIndex": sheet_index,
+            "sheet": {
+                "name": worksheet.title,
+                "rows": rows,
+                "columns": columns,
+                "totalRows": worksheet.max_row,
+                "totalColumns": worksheet.max_column,
+                "truncated": worksheet.max_row > row_limit or worksheet.max_column > column_limit,
+            },
+        }
+    finally:
+        workbook.close()
+
+
 def markdown_table_matrices(text: str) -> list[list[list[str]]]:
     tables = []
     current = []
@@ -2334,6 +2473,24 @@ class Handler(BaseHTTPRequestHandler):
                 payload["path"] = path.relative_to(DATA).as_posix()
             except (OSError, MemoryError) as error:
                 self.send_json(500, {"error": f"Could not inspect this PKL: {error}"})
+                return
+        elif request.path == "/api/workbook-render":
+            params = parse_qs(request.query)
+            relative = params.get("path", [""])[0]
+            path = self.data_path(relative)
+            if path is None:
+                self.send_json(403, {"error": "The requested path is outside the data directory."})
+                return
+            if path.suffix.lower() not in {".xlsx", ".xlsm"} or not path.is_file():
+                self.send_json(404, {"error": "The requested source workbook does not exist."})
+                return
+            try:
+                sheet_index = int(params.get("sheet", ["0"])[0])
+                stat = path.stat()
+                payload = copy.deepcopy(workbook_render_cached(str(path), stat.st_mtime_ns, stat.st_size, sheet_index))
+                payload["path"] = path.relative_to(DATA).as_posix()
+            except (OSError, ValueError, ImportError) as error:
+                self.send_json(500, {"error": f"Could not render this workbook: {error}"})
                 return
         elif request.path == "/api/yaml-summary":
             params = parse_qs(request.query)

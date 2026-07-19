@@ -20,35 +20,12 @@ const PIPELINE_PAPERS = {
   'ST-raptor': { href: 'https://arxiv.org/pdf/2508.18190', venue: 'arXiv 2508.18190' },
   SpreadsheetAgent: { href: 'https://aclanthology.org/2026.acl-long.86.pdf', venue: 'ACL 2026' },
 }
-const PIPELINE_STAGE_COPY = {
-  GraphOtter: {
-    Z: 'Preprocessed table or embedding cache used by GraphOtter.',
-    W: 'Graph retrieval, construction, and reasoning execution logs.',
-  },
-  SpreadsheetAgent: {
-    Z: 'SIFLEX structures interpreted from the source spreadsheet.',
-    W: 'Manifest describing spreadsheet operators and execution.',
-  },
-  'ST-raptor': {
-    Z: 'HTML table and serialized preprocessing representation.',
-    W: 'Payload and logs for decomposition, retrieval, and QA.',
-  },
-  'TableAgent-SIFLEX': {
-    Z: 'The corresponding SIFLEX structure.yaml representation.',
-    W: 'Agent plan, event trace, notebook, generated code, and executed cells.',
-  },
-  'Tabular-Models': {
-    Z: 'Structured solver state plus locally saved schema and data inspections.',
-    W: 'Transcript, event timeline, messages, model exchanges, commands, and scratch code.',
-  },
-}
-
 function StatusMark({ status, count, label }) {
   return (
-    <span className={`status-mark ${status}`}>
+    <div className={`status-mark ${status}`}>
       <i />
       {count === undefined ? (label ?? STATUS_LABELS[status]) : <><b>{count}</b><small>{STATUS_LABELS[status]}</small></>}
-    </span>
+    </div>
   )
 }
 
@@ -264,16 +241,7 @@ function PklTableTree({ tree }) {
   const visibleSections = sections.slice(0, 6)
   const remainingSections = sections.slice(6)
   const renderSection = (section, sectionIndex, open = false) => <details className="pkl-table-section" key={section.id || sectionIndex} open={open}>
-    <summary><span>{section.title}</span><small>{section.layout === 'table' ? `${section.totalRows} rows · ${section.totalColumns} columns` : section.layout === 'index_values' ? `${section.indexValues.length} indexed values` : 'group node'}</small></summary>
-    <div className="pkl-table-path">{section.path?.join(' / ')}</div>
-    {section.layout === 'table' ? <div className="pkl-table-wrap">
-      <table>
-        <thead><tr><th>#</th>{section.columns.map((column, columnIndex) => <th key={`${column.label}-${columnIndex}`} title={column.path?.join(' / ')}>{column.label}</th>)}</tr></thead>
-        <tbody>{section.rows.map((row, rowIndex) => <tr key={rowIndex}><th>{rowIndex + 1}</th>{row.map((value, columnIndex) => <td key={columnIndex} className={value === 'Nested table' ? 'nested-cell' : ''}>{value === null || value === undefined || value === '' ? '—' : String(value)}</td>)}</tr>)}</tbody>
-      </table>
-    </div> : section.layout === 'index_values' ? <div className="pkl-index-values"><span>Values stored in this index branch</span><div>{section.indexValues.map((value, index) => <i key={`${value}-${index}`}>{value}</i>)}</div></div> : <p className="pkl-group-node">This branch groups related nodes and does not store a direct cell value.</p>}
-    {section.truncated && <p className="pkl-table-note">Preview limited to the first 24 columns and 40 rows.</p>}
-    {section.coordinateCells > 0 && <p className="pkl-table-note">{section.coordinateCells} cells retain source coordinates in the pickle.</p>}
+    <summary><span>{section.title}</span><small>HO-Tree topology</small></summary>
     {(section.headerTree?.length > 0 || section.bodyTree?.nodes?.length > 0) && <details className="pkl-topology-details" open>
       <summary><span>HO-Tree topology</span><small>lines show saved parent → child edges</small></summary>
       <div className="pkl-topology-canvas">
@@ -302,15 +270,65 @@ function PklTableTree({ tree }) {
   </div>
 }
 
-function PklInspector({ paths = [], recordKey = '', contextPaths = [], representation = {}, panelSpan = 1, onPanelSpanChange }) {
+function WorkbookRawTable({ paths = [], recordKey = '' }) {
+  const candidate = paths.map((item) => typeof item === 'string' ? { path: item, available: true } : item).find((item) => item.available && /\.xls(?:x|m)$/i.test(item.path))
+  const [summary, setSummary] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const requestId = useRef(0)
+
+  async function loadSheet(sheetIndex = 0) {
+    if (!candidate) return
+    const currentRequest = ++requestId.current
+    setLoading(true)
+    setError('')
+    try {
+      const params = new URLSearchParams({ path: candidate.path, sheet: String(sheetIndex) })
+      const response = await fetch(`/api/workbook-render?${params}`)
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(payload.error || 'Could not render the source workbook.')
+      if (currentRequest === requestId.current) setSummary(payload)
+    } catch (requestError) {
+      if (currentRequest === requestId.current) setError(requestError.message)
+    } finally {
+      if (currentRequest === requestId.current) setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    setSummary(null)
+    if (candidate) loadSheet(0)
+  }, [recordKey, candidate?.path])
+
+  if (!candidate) return null
+  if (!summary) return <p className={`raw-table-state${error ? ' error' : ''}`}>{error || (loading ? 'Loading source table...' : '')}</p>
+  const sheet = summary.sheet
+  return <>
+    <div className="raw-table-scroll">
+      <table className="raw-workbook-table">
+        <colgroup><col className="raw-row-label" />{sheet.columns.map((column) => <col key={column.label} style={{ width: `${column.width}px` }} />)}</colgroup>
+        <thead><tr><th />{sheet.columns.map((column) => <th key={column.label}>{column.label}</th>)}</tr></thead>
+        <tbody>{sheet.rows.map((row) => <tr key={row.number} style={row.height ? { height: `${row.height}px` } : undefined}>
+          <th>{row.number}</th>
+          {row.cells.map((cell) => <td key={cell.column} colSpan={cell.colSpan} rowSpan={cell.rowSpan} style={cell.style}>{cell.value === null || cell.value === undefined ? '' : String(cell.value)}</td>)}
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {(summary.sheetNames.length > 1 || sheet.truncated) && <p className="raw-table-source">
+      {summary.sheetNames.length > 1 && <label>Sheet <select value={summary.sheetIndex} onChange={(event) => loadSheet(Number(event.target.value))}>{summary.sheetNames.map((name, index) => <option key={`${name}-${index}`} value={index}>{name}</option>)}</select></label>}
+      {sheet.truncated && <small>Preview limited to 200 rows and 60 columns.</small>}
+    </p>}
+  </>
+}
+
+function PklInspector({ paths = [], recordKey = '', contextPaths = [], representation = {} }) {
   const candidates = paths.map((item) => typeof item === 'string' ? { path: item, available: true } : item).filter((item) => item.available && item.path.toLowerCase().endsWith('.pkl'))
   const contextPath = contextPaths.map((item) => typeof item === 'string' ? { path: item, available: true } : item).find((item) => item.available && item.path.toLowerCase().endsWith('.json'))?.path || ''
   const [selectedPath, setSelectedPath] = useState(candidates[0]?.path || '')
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [opened, setOpened] = useState(false)
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const requestId = useRef(0)
   const candidateKey = candidates.map((item) => item.path).join('|')
 
@@ -345,11 +363,10 @@ function PklInspector({ paths = [], recordKey = '', contextPaths = [], represent
     setSummary(null)
     setError('')
     setLoading(false)
-    if (opened && nextPath) inspect(nextPath)
+    if (nextPath) inspect(nextPath)
   }, [recordKey, candidateKey])
 
   function showPreview() {
-    setOpened(true)
     setExpanded(true)
     if (!summary && !loading) inspect(selectedPath)
   }
@@ -359,7 +376,7 @@ function PklInspector({ paths = [], recordKey = '', contextPaths = [], represent
     setSelectedPath(nextPath)
     setSummary(null)
     setError('')
-    if (opened) inspect(nextPath)
+    inspect(nextPath)
   }
 
   if (!candidates.length) return null
@@ -369,15 +386,8 @@ function PklInspector({ paths = [], recordKey = '', contextPaths = [], represent
       <div className="pkl-inspector-head">
         <div><span>PKL artifact</span><strong>Quick structure preview</strong></div>
         <div className="pkl-inspector-actions">
-          <div className="pkl-panel-width" aria-label="Preview panel width">
-            <button type="button" className="secondary" onClick={() => onPanelSpanChange?.(Math.max(1, panelSpan - 1))} disabled={panelSpan <= 1} title="Narrow panel">-</button>
-            <small>{panelSpan} col</small>
-            <button type="button" className="secondary" onClick={() => onPanelSpanChange?.(Math.min(3, panelSpan + 1))} disabled={panelSpan >= 3} title="Widen panel">+</button>
-          </div>
-          {!opened ? <button type="button" onClick={showPreview} disabled={loading}>{loading ? 'Loading...' : 'Show preview'}</button> : <>
-            <button type="button" className="secondary" onClick={() => expanded ? setExpanded(false) : showPreview()}>{expanded ? 'Collapse' : 'Show preview'}</button>
-            {expanded && <button type="button" onClick={() => inspect(selectedPath)} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>}
-          </>}
+          <button type="button" className="secondary" onClick={() => expanded ? setExpanded(false) : showPreview()}>{expanded ? 'Collapse' : 'Show preview'}</button>
+          {expanded && <button type="button" onClick={() => inspect(selectedPath)} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>}
         </div>
       </div>
       {candidates.length > 1 && <select className="pkl-select" value={selectedPath} onChange={selectArtifact}>
@@ -420,7 +430,7 @@ function PklInspector({ paths = [], recordKey = '', contextPaths = [], represent
   )
 }
 
-function YamlStructureInspector({ paths = [], recordKey = '', panelSpan = 1, onPanelSpanChange }) {
+function YamlStructureInspector({ paths = [], recordKey = '' }) {
   const candidates = paths.map((item) => typeof item === 'string' ? { path: item, available: true } : item).filter((item) => item.available && /\.ya?ml$/i.test(item.path))
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
@@ -457,11 +467,6 @@ function YamlStructureInspector({ paths = [], recordKey = '', panelSpan = 1, onP
     <div className="yaml-inspector-head">
       <div><span>SiFlex Z artifact</span><strong>structure.yaml</strong></div>
       <div className="yaml-inspector-actions">
-        <div className="pkl-panel-width" aria-label="Preview panel width">
-          <button type="button" className="secondary" onClick={() => onPanelSpanChange?.(Math.max(1, panelSpan - 1))} disabled={panelSpan <= 1} title="Narrow panel">-</button>
-          <small>{panelSpan} col</small>
-          <button type="button" className="secondary" onClick={() => onPanelSpanChange?.(Math.min(3, panelSpan + 1))} disabled={panelSpan >= 3} title="Widen panel">+</button>
-        </div>
         <button type="button" className="secondary" onClick={() => setExpanded((value) => !value)}>{expanded ? 'Collapse' : 'Show YAML'}</button>
       </div>
     </div>
@@ -496,17 +501,28 @@ function PathList({ paths = [], onReveal, busyPath, emptyText }) {
   )
 }
 
-function TraceNode({ symbol, title, description, tone, paths, onReveal, busyPath, children, emptyText, status, span = 1 }) {
-  return (
-    <article className={`trace-node ${tone} ${status || ''} span-${span}`}>
-      <header className="trace-node-head">
-        <span className="trace-node-symbol">{symbol}</span>
-        <div><h3>{title}</h3><p>{description}</p></div>
-      </header>
-      {children && <div className="trace-node-body">{children}</div>}
-      <PathList paths={paths} onReveal={onReveal} busyPath={busyPath} emptyText={emptyText} />
-    </article>
-  )
+function TraceNode({ symbol, title, tone, paths, onReveal, busyPath, children, emptyText, status, span = 1, collapsible = false, defaultOpen = false }) {
+  const [hasOpened, setHasOpened] = useState(defaultOpen)
+  const header = <div className="trace-node-head">
+    <span className="trace-node-symbol">{symbol}</span>
+    <h3>{title}</h3>
+  </div>
+  const content = <>
+    {children && <div className="trace-node-body">{children}</div>}
+    <PathList paths={paths} onReveal={onReveal} busyPath={busyPath} emptyText={emptyText} />
+  </>
+
+  if (collapsible) {
+    return <details className={`trace-node collapsible ${tone} ${status || ''} span-${span}`} open={defaultOpen} onToggle={(event) => event.currentTarget.open && setHasOpened(true)}>
+      <summary>{header}</summary>
+      {hasOpened && <div className="trace-node-content">{content}</div>}
+    </details>
+  }
+
+  return <article className={`trace-node ${tone} ${status || ''} span-${span}`}>
+    <header>{header}</header>
+    {content}
+  </article>
 }
 
 const STRUCTURED_WORKFLOW_PIPELINES = new Set(['GraphOtter', 'SpreadsheetAgent', 'ST-raptor'])
@@ -544,7 +560,6 @@ function WorkflowTimeline({ record, onReveal, busyPath }) {
     <div className="workflow-summary">
       <div className="workflow-summary-head">
         <div><span>Execution path</span><strong>What ran, what happened, and what ran next</strong></div>
-        <small>{summary.events.length} evidence-backed steps</small>
       </div>
       <ol className="workflow-timeline">
         {summary.events.map((event, index) => {
@@ -555,7 +570,6 @@ function WorkflowTimeline({ record, onReveal, busyPath }) {
               <article>
                 <header>
                   <div><h4>{event.operator}</h4><span className={`workflow-status ${event.status}`}>{event.status}</span></div>
-                  <em className={`evidence-type ${event.evidenceType}`}>{event.evidenceType}</em>
                 </header>
                 <div className="workflow-result"><b>Result</b><p>{event.result}</p></div>
                 {event.fallback && <div className="workflow-fallback"><b>Fallback</b><p>{event.fallback}</p>{event.fallbackResult && <small>Fallback result: {event.fallbackResult}</small>}</div>}
@@ -580,7 +594,6 @@ function WorkflowTimeline({ record, onReveal, busyPath }) {
 function TraceFlow({ record }) {
   const [busyPath, setBusyPath] = useState('')
   const [notice, setNotice] = useState(null)
-  const [zSpan, setZSpan] = useState(['GraphOtter', 'TableAgent-SIFLEX'].includes(record.pipeline) ? 2 : 1)
   const artifacts = record.artifacts || {}
   const inputPaths = artifacts.input || []
   const queryPaths = inputPaths.filter((path) => /\.(?:jsonl?|csv)$/i.test(path))
@@ -588,12 +601,13 @@ function TraceFlow({ record }) {
   const components = record.components || {}
   const componentPaths = (key, fallback) => components[key]?.paths || fallback
   const renderMarkdownAnswers = ['TableAgent-SIFLEX', 'Tabular-Models'].includes(record.pipeline)
-  const stageCopy = PIPELINE_STAGE_COPY[record.pipeline] || PIPELINE_STAGE_COPY.GraphOtter
   const interpretedPaths = componentPaths('Z', artifacts.interpreted || [])
 
   useEffect(() => {
-    setZSpan(['GraphOtter', 'TableAgent-SIFLEX'].includes(record.pipeline) ? 2 : 1)
-  }, [record.pipeline])
+    if (!notice) return undefined
+    const timeout = window.setTimeout(() => setNotice(null), 3500)
+    return () => window.clearTimeout(timeout)
+  }, [notice])
 
   async function reveal(path) {
     setBusyPath(path)
@@ -612,70 +626,31 @@ function TraceFlow({ record }) {
 
   return (
     <>
-      <section className="trace-overview" aria-label="General pipeline flow">
-        <div>
-          <span>General reasoning trace</span>
-          <h2>From source evidence to evaluated answer</h2>
-          <p>The same six concepts are used for every pipeline and benchmark.</p>
-        </div>
-        <div className="trace-equation" aria-label="q plus X becomes Z, solved by W to produce Y, compared with Y star">
-          <div><b>q</b><small>query</small></div><i>+</i>
-          <div><b>X</b><small>raw data</small></div><i>-&gt;</i>
-          <div><b>Z</b><small>representation</small></div><i>-&gt;</i>
-          <div><b>W</b><small>workflow</small></div><i>-&gt;</i>
-          <div><b>Y</b><small>result</small></div><i>vs</i>
-          <div><b>Y*</b><small>reference</small></div>
-        </div>
-      </section>
       <RunMetadata record={record} />
-      {notice && <div className={`artifact-notice ${notice.type}`} role="status">{notice.text}</div>}
+      {notice && <div className={`artifact-toast ${notice.type}`} role="status" aria-live="polite">{notice.text}</div>}
       <section className="trace-grid" aria-label="Pipeline components">
-        <TraceNode symbol="q" title="Query" description="The question the pipeline must answer." tone="query" paths={componentPaths('q', queryPaths)} onReveal={reveal} busyPath={busyPath} emptyText="The question is stored in the indexed report.">
+        <TraceNode symbol="q" title="Query" tone="query" paths={componentPaths('q', queryPaths)} onReveal={reveal} busyPath={busyPath} emptyText="The question is stored in the indexed report." span={3} collapsible defaultOpen>
           <p className="trace-question">{record.question}</p>
         </TraceNode>
-        <TraceNode symbol="X" title="Raw data" description="The original table, workbook, or source evidence." tone="raw" paths={componentPaths('X', rawPaths.length ? rawPaths : inputPaths)} onReveal={reveal} busyPath={busyPath} />
-        <TraceNode symbol="Z" title="Interpreted representation" description={stageCopy.Z} tone="interpreted" paths={interpretedPaths} onReveal={reveal} busyPath={busyPath} span={zSpan}>
-          <PklInspector paths={interpretedPaths} contextPaths={[...interpretedPaths, ...inputPaths]} representation={record.representation || {}} recordKey={record.id} panelSpan={zSpan} onPanelSpanChange={setZSpan} />
-          <YamlStructureInspector paths={interpretedPaths} recordKey={record.id} panelSpan={zSpan} onPanelSpanChange={setZSpan} />
+        <TraceNode symbol="X" title="Raw data" tone="raw" paths={componentPaths('X', rawPaths.length ? rawPaths : inputPaths)} onReveal={reveal} busyPath={busyPath} span={3} collapsible>
+          <WorkbookRawTable paths={componentPaths('X', rawPaths.length ? rawPaths : inputPaths)} recordKey={record.id} />
         </TraceNode>
-        <TraceNode symbol="W" title="Solving workflow" description={stageCopy.W} tone="workflow" paths={componentPaths('W', artifacts.workflow || [])} onReveal={reveal} busyPath={busyPath} span={STRUCTURED_WORKFLOW_PIPELINES.has(record.pipeline) ? 3 : 1}>
+        <TraceNode symbol="Z" title="Interpreted representation" tone="interpreted" paths={interpretedPaths} onReveal={reveal} busyPath={busyPath} span={3} collapsible>
+          <PklInspector paths={interpretedPaths} contextPaths={[...interpretedPaths, ...inputPaths]} representation={record.representation || {}} recordKey={record.id} />
+          <YamlStructureInspector paths={interpretedPaths} recordKey={record.id} />
+        </TraceNode>
+        <TraceNode symbol="W" title="Solving workflow" tone="workflow" paths={componentPaths('W', artifacts.workflow || [])} onReveal={reveal} busyPath={busyPath} span={3} collapsible>
           {STRUCTURED_WORKFLOW_PIPELINES.has(record.pipeline) && <WorkflowTimeline record={record} onReveal={reveal} busyPath={busyPath} />}
         </TraceNode>
-        <TraceNode symbol="Y" title="Pipeline result" description="The answer produced after executing W over Z." tone="result" status={record.status} paths={componentPaths('Y', artifacts.output || [])} onReveal={reveal} busyPath={busyPath}>
+        <TraceNode symbol="Y" title="Pipeline result" tone="result" status={record.status} paths={componentPaths('Y', artifacts.output || [])} onReveal={reveal} busyPath={busyPath}>
           {record.status === 'error' ? <ErrorPrediction value={record.prediction} label={record.verdictLabel === 'Insufficient' ? 'Insufficient answer' : undefined} /> : <AnswerContent value={record.prediction} markdown={renderMarkdownAnswers} />}
           <ScoreSummary metrics={record.metrics} />
         </TraceNode>
-        <TraceNode symbol="Y*" title="Reference answer" description={record.referenceNote ? 'Reference availability and the evaluator verdict stored with this bundle.' : 'The expected answer used to evaluate Y.'} tone="reference" paths={componentPaths('Y*', queryPaths)} onReveal={reveal} busyPath={busyPath} emptyText="Reference answer path is included with the query source.">
+        <TraceNode symbol="Y*" title="Reference answer" tone="reference" paths={componentPaths('Y*', queryPaths)} onReveal={reveal} busyPath={busyPath} emptyText="Reference answer path is included with the query source.">
           {record.gold == null && record.referenceNote ? <div className="reference-unavailable"><b>Reference not bundled</b><p>{record.referenceNote}</p><StatusMark status={record.status} label={record.verdictLabel} /></div> : <AnswerContent value={record.gold} markdown={renderMarkdownAnswers} />}
         </TraceNode>
       </section>
     </>
-  )
-}
-
-function MismatchQualification({ record }) {
-  const validation = record.representationValidation || {}
-  const metrics = validation.metrics?.length ? validation.metrics : [
-    { label: 'Cells', value: validation.coverage || 0 },
-    { label: 'Rows', value: validation.rowCoverage || 0 },
-    { label: 'Precision', value: validation.precision || 0 },
-  ]
-  const validationSummary = metrics.map((metric) => `${Math.round(metric.value * 100)}% ${metric.label.toLowerCase()}`).join(' / ')
-  return (
-    <section className="mismatch-proof" aria-label="Mismatch qualification">
-      <header>
-        <div><span>Validated mismatch</span><strong>Z matches X and W completed, but Y differs from Y*</strong></div>
-        <small>{record.pipeline} / {DATASET_LABELS[record.dataset] || record.dataset}</small>
-      </header>
-      <div className="mismatch-proof-flow">
-        <article className="ready"><b>Z</b><div><strong>{record.pipeline === 'TableAgent-SIFLEX' ? 'Structure validated against X' : 'Content validated against X'}</strong><small>{validationSummary}</small></div></article>
-        <i>-&gt;</i>
-        <article className="ready"><b>W</b><div><strong>Workflow completed</strong><small>Execution produced a non-error Y</small></div></article>
-        <i>-&gt;</i>
-        <article className="mismatch"><b>Y</b><div><strong>Answer mismatch</strong><small>Y does not equal Y*</small></div></article>
-      </div>
-      <footer><span>Validation method</span><code>{validation.method}</code></footer>
-    </section>
   )
 }
 
@@ -747,15 +722,7 @@ function App() {
     if (mode === 'tabular') setTabularVerdict('all')
   }
 
-  const selectedTabularModel = tabularModelsIndex.models.find((model) => model.id === tabularModel)
   const pipelinePaper = PIPELINE_PAPERS[pipeline]
-  const scopeLabel = viewMode === 'siflex'
-    ? 'TableAgent / SiFlex'
-    : viewMode === 'tabular'
-      ? selectedTabularModel?.label || 'Tabular models'
-      : viewMode === 'mismatches'
-        ? 'Completed answer mismatches'
-      : `${pipeline} / ${DATASET_LABELS[dataset]}`
 
   function handleScroll(event) {
     const list = event.currentTarget
@@ -766,17 +733,6 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="app-header">
-        <div className="eyebrow"><i /> Artifact viewer <span>Evaluation workspace</span></div>
-        <div className="hero-row">
-          <div>
-            <h1>Artifact evaluation workspace</h1>
-            <p>Compare predictions with ground truth and inspect the evidence behind each run.</p>
-          </div>
-          <div className="header-stat"><span>Indexed pairs</span><strong>{allRecords.length}</strong><small>{scopeLabel}</small></div>
-        </div>
-      </header>
-
       <nav className="view-tabs" aria-label="Viewer sections">
         <button type="button" className={viewMode === 'benchmarks' ? 'active' : ''} onClick={() => changeView('benchmarks')}><b>Benchmark pipelines</b><span>GraphOtter, SpreadsheetAgent, ST-Raptor</span></button>
         <button type="button" className={viewMode === 'mismatches' ? 'active' : ''} onClick={() => changeView('mismatches')}><b>Answer mismatches</b><span>Z validated against X, W completed, Y differs from Y*</span></button>
@@ -854,9 +810,7 @@ function App() {
               <div><span>Selected result</span><strong>#{String(records.indexOf(selected) + 1).padStart(2, '0')}</strong></div>
               <StatusMark status={selected.status} label={selected.verdictLabel} />
             </div>
-            {viewMode === 'mismatches' && <MismatchQualification record={selected} />}
             <TraceFlow record={selected} />
-            <footer><span>Source artifact</span><code>{selected.source}</code></footer>
           </> : <div className="result-empty"><span>-</span><h2>Select a QA pair</h2><p>The golden answer and prediction will appear here.</p></div>}
         </article>
       </section>

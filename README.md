@@ -83,8 +83,8 @@ Creating a virtual environment is recommended.
 
 ```bash
 cd /path/to/ArtifactViewer
-python3 -m venv .venv
-source .venv/bin/activate
+    python3 -m venv .venv
+source .venv/bin/activatxe
 python -m pip install --upgrade pip
 python -m pip install numpy openpyxl pyyaml
 ```
