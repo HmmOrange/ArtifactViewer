@@ -22,6 +22,7 @@ def main() -> int:
     siflex_index_path = web / "src" / "siflex-index.json"
     tabular_models_index_path = web / "src" / "tabular-models-index.json"
     mismatch_index_path = web / "src" / "mismatch-index.json"
+    output_roots = (root / "data" / "Outputs", root / "data" / "Outputs_llm")
     golden_cases_path = root / "data" / "Datasets" / "SiFlex" / "golden_tests" / "compiled" / "golden_cases.json"
     siflex_needs_refresh = (
         golden_cases_path.is_file()
@@ -30,11 +31,17 @@ def main() -> int:
             or golden_cases_path.stat().st_mtime_ns > siflex_index_path.stat().st_mtime_ns
         )
     )
+    benchmark_needs_refresh = index_path.exists() and any(
+        report.stat().st_mtime_ns > index_path.stat().st_mtime_ns
+        for output_root in output_roots if output_root.is_dir()
+        for report in output_root.rglob("report_*.json")
+    )
     if (
         not index_path.exists()
         or not siflex_index_path.exists()
         or not tabular_models_index_path.exists()
         or not mismatch_index_path.exists()
+        or benchmark_needs_refresh
     ):
         indexed = subprocess.run([sys.executable, "-m", "api.server", "--build-index"], cwd=root)
         if indexed.returncode:

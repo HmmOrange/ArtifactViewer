@@ -186,6 +186,43 @@ python -m api.server --build-index
 python scripts\run_web.py
 ```
 
+## Evaluate answers with the GPT-OSS LLM judge
+
+The LLM judge compares each saved prediction with its reference answer in the context of the
+question. It accepts equivalent formatting and implied units, such as `15.5` and `15.5%` when the
+question asks for a percentage. Judge reports are written separately under `data/Outputs_llm`;
+the source reports in `data/Outputs` are never modified.
+
+By default the script matches the UI selection: it reads GraphOtter's latest report for HiTab and
+MulHi, and sends only rows currently marked wrong by exact match to the judge. Exact-match-correct
+rows are not sent again. Every source row is still copied into the corresponding `Outputs_llm`
+report, making it a complete, order-preserving mirror that the UI can consume directly.
+
+```bash
+python scripts/evaluate_outputs_llm.py
+```
+
+The configured GPT-OSS endpoint currently accepts requests without authentication. If that changes,
+set `GPT_OSS_API_KEY`; the evaluator adds the bearer header only when the variable has a value.
+
+Pass `--pipeline all` to apply the same latest-report/wrong-only behavior to every benchmark
+pipeline. `--report all` is available for historical reports, but is not needed for the UI:
+
+```bash
+python scripts/evaluate_outputs_llm.py --pipeline GraphOtter --report all
+```
+
+The evaluator checkpoints progress and resumes completed answers. Use `--overwrite` to replace
+existing judgments or `--dry-run` to inspect the selected reports and prompt without making an API
+request. Rebuild the index after evaluation if the viewer is already running:
+
+```bash
+python -m api.server --build-index
+```
+
+Starting `python scripts/run_web.py` after evaluation also detects the newer LLM reports and
+rebuilds the index automatically.
+
 ## Run the frontend and API separately
 
 This is useful when debugging.

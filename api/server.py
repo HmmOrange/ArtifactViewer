@@ -33,7 +33,8 @@ WEB_MISMATCH_INDEX_PATH = ROOT / "web" / "src" / "mismatch-index.json"
 SIFLEX_ROOT = DATA / "Log_tabAgent_Siflex"
 TABULAR_MODELS_ROOT = DATA / "Log_Tabular_Models"
 DATALAKE_CHALLENGE_ROOT = DATA / "Datasets" / "DataLake-challenge"
-INDEX_VERSION = 6
+OUTPUTS_LLM_ROOT = DATA / "Outputs_llm"
+INDEX_VERSION = 7
 QUESTION_KEYS = ("question", "query", "prompt", "qa", "input")
 GOLD_KEYS = ("gold", "golden", "answer", "reference", "ground_truth", "target", "label")
 PRED_KEYS = ("prediction", "predicted", "pred", "response", "output", "model_answer", "model_output")
@@ -867,18 +868,50 @@ def load_output_records(pipeline: str, dataset: str) -> list[dict]:
 
     report_path = max(reports, key=report_number)
     payload = json.loads(report_path.read_text(encoding="utf-8"))
+    llm_report_path = OUTPUTS_LLM_ROOT / pipeline / dataset / report_path.name
+    llm_payload = None
+    llm_by_sample = {}
+    llm_by_index = {}
+    if llm_report_path.is_file():
+        try:
+            candidate = json.loads(llm_report_path.read_text(encoding="utf-8"))
+            recorded_source = str(candidate.get("source_report") or "").replace("\\", "/").removeprefix("data/")
+            expected_source = report_path.relative_to(DATA).as_posix()
+            if not recorded_source or recorded_source == expected_source:
+                llm_payload = candidate
+                for judge_index, item in enumerate(candidate.get("results", [])):
+                    if not isinstance(item, dict):
+                        continue
+                    sample_id = item.get("sample_id")
+                    if sample_id is not None:
+                        llm_by_sample[str(sample_id)] = item
+                    source_index = item.get("source_result_index", judge_index)
+                    if isinstance(source_index, int):
+                        llm_by_index[source_index] = item
+        except (OSError, ValueError, UnicodeDecodeError):
+            llm_payload = None
     records = []
     for index, raw in enumerate(payload.get("results", [])):
         error = raw.get("error")
         exact_match = raw.get("exact_match")
+        llm_result = llm_by_sample.get(str(raw.get("sample_id"))) if raw.get("sample_id") is not None else None
+        llm_result = llm_result or llm_by_index.get(index)
+        llm_judge = llm_result.get("llm_judge", {}) if isinstance(llm_result, dict) else {}
+        llm_correct = llm_judge.get("correct")
         if error:
             status = "error"
+        elif isinstance(llm_correct, bool):
+            status = "correct" if llm_correct else "wrong"
         else:
             try:
                 status = "correct" if float(exact_match or 0) >= 1 else "wrong"
             except (TypeError, ValueError):
                 status = "wrong"
         artifacts = artifact_paths(raw, pipeline, dataset, report_path)
+        if llm_result and llm_report_path.is_file():
+            llm_relative = llm_report_path.relative_to(DATA).as_posix()
+            if llm_relative not in artifacts["output"]:
+                artifacts["output"].append(llm_relative)
         representation = None
         if pipeline == "GraphOtter":
             metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
@@ -891,6 +924,28 @@ def load_output_records(pipeline: str, dataset: str) -> list[dict]:
                 "rows": preprocess.get("row_count"),
                 "columns": preprocess.get("column_count"),
             }
+        evaluation = None
+        if llm_result and llm_payload and llm_result.get("evaluation_method") == "llm_judge":
+            evaluator = llm_payload.get("evaluator") if isinstance(llm_payload.get("evaluator"), dict) else {}
+            try:
+                exact_correct = float(exact_match or 0) >= 1
+            except (TypeError, ValueError):
+                exact_correct = False
+            evaluation = {
+                "method": "llm_judge",
+                "name": evaluator.get("name") or "LLM judge",
+                "model": evaluator.get("model"),
+                "correct": llm_correct if isinstance(llm_correct, bool) else None,
+                "confidence": llm_judge.get("confidence"),
+                "reason": llm_judge.get("reason"),
+                "error": llm_judge.get("error"),
+                "exactMatch": exact_correct,
+                "disagreesWithExactMatch": isinstance(llm_correct, bool) and llm_correct != exact_correct,
+                "reportScore": llm_payload.get("score"),
+                "evaluated": llm_payload.get("evaluated"),
+                "total": llm_payload.get("source_result_count"),
+                "source": llm_report_path.relative_to(DATA).as_posix(),
+            }
         records.append({
             "id": f"{pipeline}:{dataset}:{raw.get('sample_id') or index}",
             "pipeline": pipeline,
@@ -902,6 +957,7 @@ def load_output_records(pipeline: str, dataset: str) -> list[dict]:
             "source": str(report_path.relative_to(DATA)),
             "artifacts": artifacts,
             "representation": representation,
+            "evaluation": evaluation,
         })
     return records
 

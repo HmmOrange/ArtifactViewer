@@ -112,6 +112,25 @@ function ScoreSummary({ metrics }) {
   return <div className="score-summary">{entries.map(([label, score]) => <span key={label}><b>{Math.round(score * 100)}</b><small>{label}</small></span>)}</div>
 }
 
+function LlmJudgeSummary({ evaluation }) {
+  if (evaluation?.method !== 'llm_judge') return null
+  const hasVerdict = typeof evaluation.correct === 'boolean'
+  const tone = hasVerdict ? (evaluation.correct ? 'correct' : 'wrong') : 'error'
+  const confidence = typeof evaluation.confidence === 'number' ? `${Math.round(evaluation.confidence * 100)}% confidence` : ''
+  const reportScore = typeof evaluation.reportScore === 'number' ? `${Math.round(evaluation.reportScore * 100)}% report score` : ''
+  return (
+    <div className={`llm-judge-summary ${tone}`}>
+      <div className="llm-judge-head">
+        <div><span>{evaluation.model || evaluation.name || 'LLM judge'}</span><strong>{hasVerdict ? (evaluation.correct ? 'Answer judged correct' : 'Answer judged incorrect') : 'Judge verdict unavailable'}</strong></div>
+        <i>{[confidence, reportScore].filter(Boolean).join(' · ')}</i>
+      </div>
+      {evaluation.reason && <p>{evaluation.reason}</p>}
+      {evaluation.error && <small>{evaluation.error}</small>}
+      {evaluation.disagreesWithExactMatch && <b className="judge-disagreement">Overrides the original exact-match verdict</b>}
+    </div>
+  )
+}
+
 function RunMetadata({ record }) {
   const meta = record.runMeta
   if (!meta) return null
@@ -644,6 +663,7 @@ function TraceFlow({ record }) {
         </TraceNode>
         <TraceNode symbol="Y" title="Pipeline result" tone="result" status={record.status} paths={componentPaths('Y', artifacts.output || [])} onReveal={reveal} busyPath={busyPath}>
           {record.status === 'error' ? <ErrorPrediction value={record.prediction} label={record.verdictLabel === 'Insufficient' ? 'Insufficient answer' : undefined} /> : <AnswerContent value={record.prediction} markdown={renderMarkdownAnswers} />}
+          <LlmJudgeSummary evaluation={record.evaluation} />
           <ScoreSummary metrics={record.metrics} />
         </TraceNode>
         <TraceNode symbol="Y*" title="Reference answer" tone="reference" paths={componentPaths('Y*', queryPaths)} onReveal={reveal} busyPath={busyPath} emptyText="Reference answer path is included with the query source.">

@@ -1,0 +1,9 @@
+gpt_oss:
+  provider: "openai_compatible"
+  base_url: "http://gpt-oss.llm.mobifone.vn/v1"
+  model: "gpt-oss-20b"
+  api_key: "${GPT_OSS_API_KEY}"
+  temperature: 0
+  timeout_seconds: 100
+  max_retries: 2
+  retry_delay_seconds: 1
