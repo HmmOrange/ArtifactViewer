@@ -7,6 +7,7 @@ import qaIndex from './qa-index.json'
 import siflexIndex from './siflex-index.json'
 import tabularModelsIndex from './tabular-models-index.json'
 import mismatchIndex from './mismatch-index.json'
+import failureAnalysisIndex from './failure-analysis-index.json'
 
 const PAGE_SIZE = 40
 const PIPELINES = ['GraphOtter', 'SpreadsheetAgent', 'ST-raptor']
@@ -14,6 +15,12 @@ const DATASETS = ['HiTab', 'MultiHiertt']
 const DATASET_LABELS = { HiTab: 'HiTab', MultiHiertt: 'MultiHiertt / MulHi' }
 const MISMATCH_PIPELINES = ['GraphOtter', 'ST-raptor', 'TableAgent-SIFLEX']
 const MISMATCH_DATASETS = [...DATASETS, 'SiFlex']
+const FAILURE_CLASSIFICATIONS = ['misalignment', 'misinterpretation', 'failed_code']
+const FAILURE_LABELS = {
+  misalignment: 'Misalignment',
+  misinterpretation: 'Misinterpretation',
+  failed_code: 'Failed code',
+}
 const STATUS_LABELS = { correct: 'Correct', wrong: 'Wrong', error: 'Error' }
 const PIPELINE_PAPERS = {
   GraphOtter: { href: 'https://arxiv.org/pdf/2412.01230', venue: 'arXiv 2412.01230' },
@@ -674,6 +681,221 @@ function TraceFlow({ record }) {
   )
 }
 
+function failurePercent(value) {
+  return `${(Number(value || 0) * 100).toFixed(2)}%`
+}
+
+function FailureRatioBar({ label, count, denominator, ratio, tone }) {
+  return <div className={`failure-ratio-row ${tone}`}>
+    <div><span>{label}</span><strong>{count}<small>/{denominator}</small></strong></div>
+    <div className="failure-ratio-track"><i style={{ width: `${Math.max(0, Number(ratio || 0) * 100)}%` }} /></div>
+    <b>{failurePercent(ratio)}</b>
+  </div>
+}
+
+function FailureSummaryCard({ item }) {
+  return <article className="failure-summary-card">
+    <header><div><span>{item.benchmark}</span><strong>{item.solution}</strong></div><small>{item.totalFailCases} failed outcomes</small></header>
+    <FailureRatioBar label="Misalignment" count={item.misalignmentCases} denominator={item.totalWrongCases} ratio={item.misalignmentRatio} tone="misalignment" />
+    <FailureRatioBar label="Misinterpretation" count={item.misinterpretationCases} denominator={item.totalWrongCases} ratio={item.misinterpretationRatio} tone="misinterpretation" />
+    <FailureRatioBar label="Failed code" count={item.failedCodeCases} denominator={item.totalFailCases} ratio={item.failedCodeRatio} tone="failed-code" />
+  </article>
+}
+
+function parsedPreview(value) {
+  if (!value) return null
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+function FailureMatrix({ matrix }) {
+  if (!Array.isArray(matrix) || !matrix.length) return <div className="failure-preview-empty">No matrix preview was saved.</div>
+  return <div className="failure-matrix-scroll"><table><tbody>
+    {matrix.map((row, rowIndex) => <tr key={rowIndex}>{(Array.isArray(row) ? row : [row]).map((cell, columnIndex) => {
+      const Cell = rowIndex === 0 || columnIndex === 0 ? 'th' : 'td'
+      return <Cell key={columnIndex}>{cell === '' || cell == null ? <i>-</i> : String(cell)}</Cell>
+    })}</tr>)}
+  </tbody></table></div>
+}
+
+function FailurePreview({ value, label }) {
+  const parsed = parsedPreview(value)
+  if (Array.isArray(parsed)) return <FailureMatrix matrix={parsed} />
+  if (parsed && typeof parsed === 'object') {
+    return <div className="failure-table-previews">{Object.entries(parsed).map(([table, matrix]) => <section key={table}><span>{label} table {table}</span><FailureMatrix matrix={matrix} /></section>)}</div>
+  }
+  if (!value) return <div className="failure-preview-empty">No preview was saved.</div>
+  return <pre className="failure-text-preview">{value}</pre>
+}
+
+function FailureArtifactPaths({ symbol, paths = [], onReveal, busyPath }) {
+  if (!paths.length) return <div className="failure-path-empty">No saved {symbol} artifact.</div>
+  return <div className="failure-artifact-paths">{paths.map((path) => <button type="button" key={path} onClick={() => onReveal(path)} disabled={busyPath === path} title={path}><code>{path}</code><b>{busyPath === path ? 'Opening' : 'Open'}</b></button>)}</div>
+}
+
+function FailureNativeZVisual({ record }) {
+  const zPaths = record.paths?.Z || []
+  if (!zPaths.some((path) => /\.pkl$/i.test(path))) return null
+  const isGraphOtter = record.solution === 'GraphOtter'
+  const isMulhi = record.benchmark === 'mulhi'
+  const selectedIndex = Number(record.selectedTables?.[0])
+  const representation = {
+    contextId: isGraphOtter ? (isMulhi ? record.sampleId : String(record.expectedTables?.[0] || '')) : '',
+    tableIndex: isGraphOtter && isMulhi && Number.isInteger(selectedIndex) ? selectedIndex : null,
+  }
+  return <div className="failure-native-z-visual">
+    <div className="failure-native-z-label"><span>Native pipeline visual</span><strong>{isGraphOtter ? 'GraphOtter cell graph and embedding table' : 'ST-Raptor HO-Tree'}</strong></div>
+    <PklInspector paths={zPaths} contextPaths={[...zPaths, ...(record.paths?.X || [])]} representation={representation} recordKey={record.id} />
+  </div>
+}
+
+function FailureCaseDetail({ record }) {
+  const [busyPath, setBusyPath] = useState('')
+  const [notice, setNotice] = useState(null)
+
+  useEffect(() => {
+    if (!notice) return undefined
+    const timeout = window.setTimeout(() => setNotice(null), 3500)
+    return () => window.clearTimeout(timeout)
+  }, [notice])
+
+  async function reveal(path) {
+    setBusyPath(path)
+    setNotice(null)
+    try {
+      const response = await fetch(`/api/reveal?path=${encodeURIComponent(path)}`, { method: 'POST' })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(payload.error || 'Could not open this artifact.')
+      setNotice({ type: 'success', text: 'Opened in your file manager.' })
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message })
+    } finally {
+      setBusyPath('')
+    }
+  }
+
+  const gold = formatAnswer(record.gold)
+  const isCodeFailure = record.outcome === 'execution_failed'
+  const xPaths = record.paths?.X || []
+  const hasWorkbook = xPaths.some((path) => /\.xls(?:x|m)$/i.test(path))
+  return <div className="failure-case-detail">
+    {notice && <div className={`artifact-toast ${notice.type}`} role="status">{notice.text}</div>}
+    <header className="failure-case-head">
+      <div><span>{record.benchmark} / {record.solution}</span><h2>{FAILURE_LABELS[record.classification]}</h2></div>
+      <div className={`failure-classification ${record.classification}`}><i />{record.classification.replace('_', ' ')}</div>
+    </header>
+    <div className="failure-case-meta"><span>Case <code>{record.sampleId}</code></span><span>W <b>{record.wStatus}</b></span>{!isCodeFailure && <span>Z <b>{record.zMatchesX ? 'matches X' : 'does not match X'}</b></span>}</div>
+    <section className="failure-question"><span>Question</span><p>{record.question}</p></section>
+    {!isCodeFailure && <section className={`failure-verification ${record.zMatchesX ? 'matched' : 'mismatched'}`}>
+      <div><span>X to Z verification</span><strong>{record.zMatchesX ? 'Representation aligned' : 'Representation mismatch'}</strong></div>
+      <p>{record.xZEvidence}</p>
+      <div className="failure-checks"><span className={record.zCreated ? 'pass' : 'fail'}>Z created</span><span className={record.zStructuralMatch ? 'pass' : 'fail'}>Structure</span><span className={record.zScopeMatch ? 'pass' : 'fail'}>Relevant scope</span></div>
+    </section>}
+    <div className="failure-trace-grid">
+      <article className="failure-trace-node raw">
+        <header><b>X</b><div><span>Expected raw evidence</span><strong>{JSON.stringify(record.expectedTables)}</strong></div></header>
+        {hasWorkbook ? <div className="failure-native-x-visual"><WorkbookRawTable paths={xPaths} recordKey={record.id} /></div> : <FailurePreview value={record.xPreview} label="X" />}
+        <FailureArtifactPaths symbol="X" paths={xPaths} onReveal={reveal} busyPath={busyPath} />
+      </article>
+      <article className="failure-trace-node interpreted">
+        <header><b>Z</b><div><span>Selected representation</span><strong>{JSON.stringify(record.selectedTables)}</strong></div></header>
+        <FailureNativeZVisual record={record} />
+        <FailurePreview value={record.zPreview} label="Z" />
+        <FailureArtifactPaths symbol="Z" paths={record.paths?.Z} onReveal={reveal} busyPath={busyPath} />
+      </article>
+      <article className={`failure-trace-node workflow ${record.outcome === 'execution_failed' ? 'failed' : ''}`}>
+        <header><b>W</b><div><span>Solving workflow</span><strong>{record.wStatus}</strong></div></header>
+        {record.wError ? <ErrorPrediction value={record.wError} /> : <div className="failure-workflow-complete"><i />Execution completed and returned an answer.</div>}
+        <FailureArtifactPaths symbol="W" paths={record.paths?.W} onReveal={reveal} busyPath={busyPath} />
+      </article>
+      <article className="failure-trace-node answers">
+        <header><b>Y</b><div><span>Answer comparison</span><strong>Prediction vs reference</strong></div></header>
+        <div className="failure-answer-pair"><section><span>Y</span><p>{record.prediction || '-'}</p></section><section><span>Y*</span><p>{gold}</p></section></div>
+        {record.judgeReason && <div className="failure-judge-reason"><span>LLM judge</span><p>{record.judgeReason}</p></div>}
+        <FailureArtifactPaths symbol="Y" paths={record.paths?.Y} onReveal={reveal} busyPath={busyPath} />
+      </article>
+    </div>
+    {record.goldTableEvidence?.length > 0 && <footer className="failure-gold-evidence"><span>Gold table evidence</span><code>{JSON.stringify(record.goldTableEvidence)}</code></footer>}
+  </div>
+}
+
+function downloadFailureCsv(records) {
+  const columns = ['benchmark', 'solution', 'sampleId', 'classification', 'outcome', 'question', 'prediction', 'gold', 'wStatus', 'zMatchesX', 'expectedTables', 'selectedTables', 'xZEvidence']
+  const quote = (value) => `"${String(typeof value === 'string' ? value : JSON.stringify(value ?? '')).replaceAll('"', '""')}"`
+  const csv = `\ufeff${columns.map(quote).join(',')}\r\n${records.map((record) => columns.map((column) => quote(record[column])).join(',')).join('\r\n')}`
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  link.download = 'filtered_failure_cases.csv'
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+function FailureAnalysisView() {
+  const [benchmark, setBenchmark] = useState('all')
+  const [solution, setSolution] = useState('all')
+  const [classification, setClassification] = useState('all')
+  const [query, setQuery] = useState('')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const [selectedId, setSelectedId] = useState('')
+  const records = failureAnalysisIndex.records || []
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    return records.filter((record) => (
+      (benchmark === 'all' || record.benchmark === benchmark)
+      && (solution === 'all' || record.solution === solution)
+      && (classification === 'all' || record.classification === classification)
+      && (!normalized || `${record.question} ${record.sampleId} ${record.prediction} ${formatAnswer(record.gold)}`.toLowerCase().includes(normalized))
+    ))
+  }, [records, benchmark, solution, classification, query])
+  const visible = filtered.slice(0, visibleCount)
+  const selected = visible.find((record) => record.id === selectedId) || visible[0]
+  const categoryCounts = useMemo(() => filtered.reduce((counts, record) => {
+    counts[record.classification] += 1
+    return counts
+  }, { misalignment: 0, misinterpretation: 0, failed_code: 0 }), [filtered])
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+    setSelectedId('')
+  }, [benchmark, solution, classification, query])
+
+  function handleScroll(event) {
+    const list = event.currentTarget
+    if (visible.length < filtered.length && list.scrollHeight - list.scrollTop - list.clientHeight < 120) {
+      setVisibleCount((count) => count + PAGE_SIZE)
+    }
+  }
+
+  if (!failureAnalysisIndex.available) return <section className="failure-analysis-unavailable"><h2>Failure analysis is not available</h2><p>{failureAnalysisIndex.note}</p></section>
+  return <section className="failure-analysis-view">
+    <div className="failure-analysis-scroll">
+      <div className="failure-summary-grid">{failureAnalysisIndex.summary.map((item) => <FailureSummaryCard key={`${item.benchmark}-${item.solution}`} item={item} />)}</div>
+      <section className="failure-explorer">
+        <div className="failure-filter-bar">
+          <div className="failure-filter-copy"><span>Case explorer</span><strong>{filtered.length} matching failed cases</strong><small>{categoryCounts.misalignment} misalignment · {categoryCounts.misinterpretation} misinterpretation · {categoryCounts.failed_code} failed code</small></div>
+          <SelectField label="Benchmark" value={benchmark} onChange={(event) => setBenchmark(event.target.value)}><option value="all">All benchmarks</option><option>Hitab</option><option>mulhi</option></SelectField>
+          <SelectField label="Solution" value={solution} onChange={(event) => setSolution(event.target.value)}><option value="all">All solutions</option>{PIPELINES.map((name) => <option key={name}>{name}</option>)}</SelectField>
+          <SelectField label="Failure mode" value={classification} onChange={(event) => setClassification(event.target.value)}><option value="all">All failure modes</option>{FAILURE_CLASSIFICATIONS.map((name) => <option key={name} value={name}>{FAILURE_LABELS[name]}</option>)}</SelectField>
+          <label className="search-field"><span>Find a case</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Question, case ID, or answer..." /></label>
+          <button type="button" className="failure-export" onClick={() => downloadFailureCsv(filtered)}>Export filtered CSV</button>
+        </div>
+        <div className="failure-workspace">
+          <aside className="failure-case-list" onScroll={handleScroll} tabIndex={0}>
+            {!visible.length && <div className="empty-state">No failed cases match these filters.</div>}
+            {visible.map((record, index) => <button type="button" key={record.id} className={`failure-case-item ${record.classification} ${selected?.id === record.id ? 'active' : ''}`} onClick={() => setSelectedId(record.id)}>
+              <span>{String(index + 1).padStart(3, '0')}</span><div><b>{record.question}</b><small>{record.benchmark} · {record.solution} · {FAILURE_LABELS[record.classification]}</small></div><i />
+            </button>)}
+          </aside>
+          <article className="failure-detail-panel">{selected ? <FailureCaseDetail record={selected} /> : <div className="result-empty"><span>-</span><h2>Select a failed case</h2></div>}</article>
+        </div>
+      </section>
+    </div>
+  </section>
+}
+
 function App() {
   const [viewMode, setViewMode] = useState('benchmarks')
   const [pipeline, setPipeline] = useState('ST-raptor')
@@ -752,14 +974,16 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${viewMode === 'analysis' ? 'analysis-shell' : ''}`}>
       <nav className="view-tabs" aria-label="Viewer sections">
         <button type="button" className={viewMode === 'benchmarks' ? 'active' : ''} onClick={() => changeView('benchmarks')}><b>Benchmark pipelines</b><span>GraphOtter, SpreadsheetAgent, ST-Raptor</span></button>
+        <button type="button" className={viewMode === 'analysis' ? 'active' : ''} onClick={() => changeView('analysis')}><b>Failure analysis</b><span>Ratios and all {failureAnalysisIndex.totalCases || 0} failed cases</span></button>
         <button type="button" className={viewMode === 'mismatches' ? 'active' : ''} onClick={() => changeView('mismatches')}><b>Answer mismatches</b><span>Z validated against X, W completed, Y differs from Y*</span></button>
         <button type="button" className={viewMode === 'siflex' ? 'active' : ''} onClick={() => changeView('siflex')}><b>TableAgent / SIFLEX</b><span>{siflexIndex.run.name}</span></button>
         <button type="button" className={viewMode === 'tabular' ? 'active' : ''} onClick={() => changeView('tabular')}><b>Tabular models</b><span>Runs matched to uploaded Data Lake files</span></button>
       </nav>
 
+      {viewMode === 'analysis' ? <FailureAnalysisView /> : <>
       <section className={`filter-bar ${viewMode === 'siflex' ? 'siflex-filter' : ''} ${viewMode === 'tabular' ? 'tabular-filter' : ''} ${viewMode === 'mismatches' ? 'mismatch-filter' : ''}`} aria-label="Filters">
         {viewMode === 'benchmarks' ? <>
           <div className="filter-copy pipeline-reference">
@@ -834,6 +1058,7 @@ function App() {
           </> : <div className="result-empty"><span>-</span><h2>Select a QA pair</h2><p>The golden answer and prediction will appear here.</p></div>}
         </article>
       </section>
+      </>}
     </main>
   )
 }

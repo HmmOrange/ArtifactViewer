@@ -540,3 +540,189 @@ button.workflow-source:disabled { cursor: wait; opacity: .6; }
 .app-shell :is(p, span, small, b, strong, code, summary, button, input, select, h3, h4, td, th, pre, i, em) {
   font-size: 14px;
 }
+
+/* Failure analysis */
+.app-shell.analysis-shell { grid-template-rows: auto minmax(0, 1fr); }
+.failure-analysis-view { min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); box-shadow: 0 5px 18px rgba(38, 50, 56, .06); }
+.failure-analysis-scroll { height: 100%; padding: 10px; overflow: auto; scrollbar-gutter: stable; }
+
+.failure-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.failure-summary-card { min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 2px 8px rgba(40, 49, 45, .04); }
+.failure-summary-card > header { display: flex; min-height: 42px; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.app-shell .failure-summary-card header span { display: block; color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.app-shell .failure-summary-card header strong { display: block; margin-top: 2px; font-size: 15px; }
+.app-shell .failure-summary-card header small { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.failure-ratio-row { display: grid; grid-template-columns: minmax(112px, .8fr) minmax(80px, 1fr) 52px; gap: 8px; align-items: center; padding-top: 9px; }
+.failure-ratio-row > div:first-child { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 6px; }
+.app-shell .failure-ratio-row span { overflow: hidden; color: #56635e; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell .failure-ratio-row strong { color: #34423e; font-size: 12px; }
+.app-shell .failure-ratio-row strong small { color: #89928e; font-size: 9px; font-weight: 600; }
+.app-shell .failure-ratio-row > b { color: #485650; font-family: "SFMono-Regular", "Cascadia Code", monospace; font-size: 10px; text-align: right; }
+.failure-ratio-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--surface-strong); }
+.failure-ratio-track i { display: block; height: 100%; border-radius: inherit; background: #d7a444; }
+.failure-ratio-row.misinterpretation .failure-ratio-track i { background: #cf594d; }
+.failure-ratio-row.failed-code .failure-ratio-track i { background: #527d70; }
+
+.failure-explorer { min-height: 760px; margin-top: 10px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 5px 18px rgba(38, 50, 56, .06); }
+.failure-filter-bar { display: grid; grid-template-columns: minmax(215px, 1.1fr) 140px 165px 170px minmax(210px, 1fr) 150px; gap: 10px; align-items: end; padding: 10px 12px; border-bottom: 1px solid var(--border); background: rgba(255, 255, 255, .92); }
+.failure-filter-copy { align-self: center; min-width: 0; }
+.app-shell .failure-filter-copy > span { display: block; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.app-shell .failure-filter-copy > strong { display: block; margin-top: 2px; font-size: 14px; }
+.app-shell .failure-filter-copy > small { display: block; margin-top: 3px; overflow: hidden; color: #74807b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.failure-filter-bar .select-field > span, .failure-filter-bar .search-field > span { font-size: 10px; }
+.failure-filter-bar .select-field select, .failure-filter-bar .search-field input { height: 40px; font-size: 13px; }
+.failure-export { height: 40px; padding: 0 12px; border: 1px solid var(--primary); border-radius: 6px; color: #fff; background: var(--primary); font-size: 11px !important; font-weight: 750; cursor: pointer; }
+.failure-export:hover { background: #204d45; }
+.failure-workspace { display: grid; grid-template-columns: clamp(310px, 27vw, 390px) minmax(0, 1fr); height: 700px; min-height: 0; }
+.failure-case-list { min-width: 0; overflow: auto; border-right: 1px solid var(--border); background: #f5f7f4; scrollbar-gutter: stable; }
+.failure-case-item { display: grid; grid-template-columns: 38px minmax(0, 1fr) 8px; gap: 9px; width: 100%; min-height: 78px; align-items: start; padding: 12px 13px; border: 0; border-bottom: 1px solid var(--border); color: var(--foreground); background: transparent; text-align: left; cursor: pointer; }
+.failure-case-item:hover { background: #edf1ed; }
+.failure-case-item.active { background: #fff; box-shadow: inset 3px 0 #d09a39; }
+.failure-case-item.misinterpretation.active { box-shadow: inset 3px 0 #cc574c; }
+.failure-case-item.failed_code.active { box-shadow: inset 3px 0 #4f7b6d; }
+.app-shell .failure-case-item > span { padding-top: 2px; color: #939c98; font-family: "SFMono-Regular", "Cascadia Code", monospace; font-size: 10px; }
+.failure-case-item > div { display: grid; min-width: 0; gap: 5px; }
+.app-shell .failure-case-item b { display: -webkit-box; overflow: hidden; font-size: 13px; font-weight: 650; line-height: 1.42; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.app-shell .failure-case-item small { overflow: hidden; color: #71807a; font-size: 9px; font-weight: 750; letter-spacing: .04em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.failure-case-item > i { width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: #d7a444; }
+.failure-case-item.misinterpretation > i { border-radius: 1px; background: #cc574c; }
+.failure-case-item.failed_code > i { width: 0; height: 0; border-right: 4px solid transparent; border-bottom: 8px solid #4f7b6d; border-left: 4px solid transparent; background: transparent; }
+.failure-detail-panel { min-width: 0; overflow: auto; background: #fff; scrollbar-gutter: stable; }
+.failure-case-detail { padding: 20px; }
+.failure-case-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.app-shell .failure-case-head span { color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.failure-case-head h2 { margin: 3px 0 0; font-size: 24px; letter-spacing: -.025em; }
+.failure-classification { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #ead09e; border-radius: 999px; color: #8d6727; background: #fff8e9; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.failure-classification i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.failure-classification.misinterpretation { border-color: #ecc2bc; color: #a3473d; background: #fff3f0; }
+.failure-classification.failed_code { border-color: #bdd6cc; color: #356657; background: #eef8f4; }
+.failure-case-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+.app-shell .failure-case-meta span { padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; color: #6a7571; background: #f8faf8; font-size: 10px; }
+.app-shell .failure-case-meta code, .app-shell .failure-case-meta b { color: #43504b; font-size: 10px; }
+.failure-question { margin-top: 12px; padding: 11px 12px; border-left: 3px solid #6a9187; background: #f3f7f5; }
+.app-shell .failure-question span { color: #58766d; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.app-shell .failure-question p { margin: 5px 0 0; color: #30413b; font-size: 14px; font-weight: 600; line-height: 1.55; }
+.failure-verification { display: grid; grid-template-columns: minmax(180px, .55fr) minmax(260px, 1.5fr) auto; gap: 12px; align-items: center; margin-top: 10px; padding: 10px 11px; border: 1px solid #bed9cd; border-radius: 6px; background: #f0f8f4; }
+.failure-verification.mismatched { border-color: #ecc3bc; background: #fff4f1; }
+.app-shell .failure-verification span { display: block; color: #658078; font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.app-shell .failure-verification strong { display: block; margin-top: 2px; color: #315f51; font-size: 12px; }
+.failure-verification.mismatched strong { color: #9a4339; }
+.app-shell .failure-verification p { margin: 0; color: #52625c; font-size: 11px; line-height: 1.5; }
+.failure-checks { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.app-shell .failure-checks span { padding: 4px 6px; border-radius: 999px; color: #39705f; background: #dceee7; font-size: 8px; }
+.app-shell .failure-checks span.fail { color: #9d443a; background: #f7d9d4; }
+.failure-trace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
+.failure-trace-node { display: flex; min-width: 0; min-height: 250px; flex-direction: column; padding: 11px; border: 1px solid var(--border); border-top: 3px solid #7c8b85; border-radius: 7px; background: #fafbf9; }
+.failure-trace-node.raw, .failure-trace-node.interpreted { grid-column: 1 / -1; }
+.failure-trace-node.interpreted { border-top-color: #c28a46; background: #fffbf5; }
+.failure-trace-node.workflow { border-top-color: #4d8b80; background: #f7fbf9; }
+.failure-trace-node.workflow.failed { border-top-color: #4f7b6d; }
+.failure-trace-node.answers { border-top-color: #c85549; background: #fff9f7; }
+.failure-trace-node > header { display: flex; align-items: center; gap: 9px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.app-shell .failure-trace-node > header > b { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border: 1px solid currentColor; border-radius: 6px; color: #52645e; font-family: "SFMono-Regular", "Cascadia Code", monospace; font-size: 12px; }
+.failure-trace-node > header > div { min-width: 0; }
+.app-shell .failure-trace-node header span { display: block; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.app-shell .failure-trace-node header strong { display: block; margin-top: 2px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.failure-native-x-visual { margin-top: 10px; min-width: 0; }
+.failure-native-x-visual .raw-table-scroll { max-height: min(680px, 72vh); border: 1px solid var(--border); border-radius: 5px; }
+.app-shell .failure-native-x-visual .raw-workbook-table th,
+.app-shell .failure-native-x-visual .raw-workbook-table td { padding: 8px 10px; font-size: 11px; }
+.app-shell .failure-native-x-visual .raw-table-source,
+.app-shell .failure-native-x-visual .raw-table-source select,
+.app-shell .failure-native-x-visual .raw-table-source small { font-size: 10px; }
+.failure-native-z-visual { margin-top: 10px; padding: 10px; border: 1px solid #dfd4c4; border-radius: 6px; background: #fffdf8; }
+.failure-native-z-label { margin-bottom: 8px; }
+.app-shell .failure-native-z-label span { display: block; color: #927040; font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.app-shell .failure-native-z-label strong { display: block; margin-top: 2px; color: #4d554f; font-size: 12px; }
+.failure-native-z-visual .pkl-inspector { padding: 12px; }
+.app-shell .failure-native-z-visual .pkl-inspector-head span { font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-inspector-head strong { font-size: 13px; }
+.app-shell .failure-native-z-visual .pkl-inspector-head button { min-height: 32px; padding: 0 10px; font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-select { height: 34px; font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-summary-title b { font-size: 13px; }
+.app-shell .failure-native-z-visual .pkl-summary-title small { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-tree-copy { font-size: 11px; line-height: 1.5; }
+.app-shell .failure-native-z-visual .pkl-metrics b { font-size: 12px; }
+.app-shell .failure-native-z-visual .pkl-metrics small { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-cell-graph-head span { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-cell-graph-head strong { font-size: 11px; }
+.app-shell .failure-native-z-visual .pkl-edge-legend { font-size: 9px; }
+.failure-native-z-visual .pkl-cell-graph text { font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-caption { font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-embedding-table-head span { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-embedding-table-head strong { font-size: 11px; }
+.app-shell .failure-native-z-visual .pkl-embedding-table-head small { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-embedding-table-wrap th,
+.app-shell .failure-native-z-visual .pkl-embedding-table-wrap td { padding: 8px 9px; font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-table-section > summary { min-height: 36px; font-size: 11px; }
+.app-shell .failure-native-z-visual .pkl-table-section > summary small { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-topology-details > summary { padding: 8px; font-size: 11px; }
+.app-shell .failure-native-z-visual .pkl-topology-details > summary small { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-tree-node { padding: 5px 7px; font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-tree-node small { font-size: 8px; }
+.app-shell .failure-native-z-visual .pkl-tree-node.tree-root { font-size: 11px; }
+.app-shell .failure-native-z-visual .pkl-body-tree-details > summary { font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-body-tree-details > p { font-size: 9px; }
+.app-shell .failure-native-z-visual .pkl-more-sections > summary { font-size: 10px; }
+.app-shell .failure-native-z-visual .pkl-table-note,
+.app-shell .failure-native-z-visual .pkl-error { font-size: 10px; line-height: 1.5; }
+.failure-table-previews { display: grid; gap: 7px; margin-top: 8px; }
+.app-shell .failure-table-previews > section > span { display: block; margin-bottom: 4px; color: #7d6a4f; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.failure-matrix-scroll { max-height: 215px; overflow: auto; border: 1px solid #dde2de; border-radius: 4px; background: #fff; }
+.failure-matrix-scroll table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.app-shell .failure-matrix-scroll th, .app-shell .failure-matrix-scroll td { max-width: 260px; padding: 6px 7px; border-right: 1px solid #e3e7e4; border-bottom: 1px solid #e3e7e4; color: #495650; font-size: 10px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.app-shell .failure-matrix-scroll th { color: #37584f; background: #eef3f0; font-weight: 700; }
+.app-shell .failure-matrix-scroll i { color: #afb6b3; font-size: 7px; font-style: normal; }
+.failure-text-preview { max-height: 220px; margin: 8px 0 0; padding: 8px; overflow: auto; border: 1px solid #e4dacb; border-radius: 4px; color: #4e554f; background: #fff; font-family: "SFMono-Regular", "Cascadia Code", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-shell .failure-text-preview { font-size: 10px; line-height: 1.5; }
+.failure-preview-empty, .failure-path-empty { margin: 8px 0; padding: 8px; color: #939c98; font-size: 10px; font-style: italic; }
+.failure-artifact-paths { display: grid; gap: 4px; margin-top: auto; padding-top: 8px; }
+.failure-artifact-paths button { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 6px; border: 1px solid var(--border); border-radius: 4px; color: #50605a; background: #fff; cursor: pointer; }
+.failure-artifact-paths button:hover { border-color: #aabbb4; background: #f7faf8; }
+.failure-artifact-paths button:disabled { cursor: wait; opacity: .6; }
+.app-shell .failure-artifact-paths code { min-width: 0; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell .failure-artifact-paths b { flex: 0 0 auto; color: var(--primary); font-size: 8px; text-transform: uppercase; }
+.failure-workflow-complete { display: flex; align-items: center; gap: 7px; margin-top: 9px; padding: 9px; border: 1px solid #bfdbcf; border-radius: 5px; color: #3e6e5d; background: #eef8f3; font-size: 11px; }
+.failure-workflow-complete i { width: 7px; height: 7px; border-radius: 50%; background: #3e8a68; }
+.failure-answer-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
+.failure-answer-pair section { min-width: 0; padding: 9px; border: 1px solid #ebcbc5; border-radius: 5px; background: #fff; }
+.failure-answer-pair section:last-child { border-color: #bfddce; }
+.app-shell .failure-answer-pair span, .app-shell .failure-judge-reason span, .app-shell .failure-gold-evidence span { color: #9d4f44; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.app-shell .failure-answer-pair section:last-child span { color: #39715d; }
+.app-shell .failure-answer-pair p { max-height: 165px; margin: 5px 0 0; overflow: auto; color: #3d4a46; font-size: 12px; font-weight: 650; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.failure-judge-reason { margin-top: 7px; padding: 7px 8px; border: 1px solid #e4d7ca; border-radius: 5px; background: #fffdf8; }
+.failure-judge-reason span { color: #8b6a3a !important; }
+.app-shell .failure-judge-reason p { margin: 3px 0 0; color: #625c51; font-size: 10px; line-height: 1.5; }
+.failure-gold-evidence { margin-top: 10px; padding: 8px 10px; border: 1px dashed #cfb17d; border-radius: 5px; background: #fffaf0; }
+.failure-gold-evidence span { display: block; color: #8d6b32 !important; }
+.app-shell .failure-gold-evidence code { display: block; margin-top: 3px; color: #5f5648; font-size: 10px; overflow-wrap: anywhere; }
+.failure-analysis-unavailable { display: grid; place-items: center; min-height: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); text-align: center; }
+
+@media (max-width: 1280px) {
+  .failure-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .failure-filter-bar { grid-template-columns: minmax(210px, 1fr) repeat(3, 135px) minmax(190px, 1fr); }
+  .failure-export { grid-column: -2 / -1; }
+}
+
+@media (max-width: 900px) {
+  .app-shell.analysis-shell { height: auto; min-height: 100dvh; }
+  .failure-analysis-view { overflow: visible; }
+  .failure-analysis-scroll { height: auto; overflow: visible; padding: 10px; }
+  .failure-summary-grid { grid-template-columns: 1fr; }
+  .failure-filter-bar { grid-template-columns: 1fr 1fr; }
+  .failure-filter-copy, .failure-filter-bar .search-field { grid-column: 1 / -1; }
+  .failure-export { grid-column: auto; }
+  .failure-workspace { grid-template-columns: 1fr; height: auto; }
+  .failure-case-list { max-height: 360px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .failure-detail-panel { overflow: visible; }
+  .failure-trace-grid { grid-template-columns: 1fr; }
+  .failure-verification { grid-template-columns: 1fr; }
+  .failure-checks { justify-content: flex-start; }
+}
+
+@media (max-width: 560px) {
+  .failure-filter-bar { grid-template-columns: 1fr; }
+  .failure-filter-copy, .failure-filter-bar .search-field { grid-column: auto; }
+  .failure-ratio-row { grid-template-columns: minmax(105px, 1fr) minmax(70px, 1fr) 50px; }
+  .failure-answer-pair { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,7 @@
+﻿benchmark,solution,total_wrong_cases,misalignment_cases,misalignment_ratio,misinterpretation_cases,misinterpretation_ratio,total_fail_cases,failed_code_cases,failed_code_ratio,source_report
+Hitab,GraphOtter,114,114,1.0,0,0.0,220,106,0.4818181818181818,data/Outputs/GraphOtter/HiTab/report_3.json
+mulhi,GraphOtter,142,73,0.5140845070422535,69,0.4859154929577465,145,3,0.020689655172413793,data/Outputs/GraphOtter/MultiHiertt/report_3.json
+Hitab,ST-raptor,21,8,0.38095238095238093,13,0.6190476190476191,57,36,0.631578947368421,data/Outputs/ST-raptor/HiTab/report_1.json
+mulhi,ST-raptor,33,19,0.5757575757575758,14,0.42424242424242425,199,166,0.8341708542713567,data/Outputs/ST-raptor/MultiHiertt/report_1.json
+Hitab,SpreadsheetAgent,187,187,1.0,0,0.0,187,0,0.0,data/Outputs/SpreadsheetAgent/HiTab/report_3.json
+mulhi,SpreadsheetAgent,111,111,1.0,0,0.0,125,14,0.112,data/Outputs/SpreadsheetAgent/MultiHiertt/report_3.json

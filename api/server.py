@@ -30,11 +30,14 @@ WEB_INDEX_PATH = ROOT / "web" / "src" / "qa-index.json"
 WEB_SIFLEX_INDEX_PATH = ROOT / "web" / "src" / "siflex-index.json"
 WEB_TABULAR_MODELS_INDEX_PATH = ROOT / "web" / "src" / "tabular-models-index.json"
 WEB_MISMATCH_INDEX_PATH = ROOT / "web" / "src" / "mismatch-index.json"
+WEB_FAILURE_ANALYSIS_INDEX_PATH = ROOT / "web" / "src" / "failure-analysis-index.json"
+FAILURE_ANALYSIS_ROOT = ROOT / "analysis" / "failure_modes"
+FAILURE_ANALYSIS_ROOT = ROOT / "analysis" / "failure_modes"
 SIFLEX_ROOT = DATA / "Log_tabAgent_Siflex"
 TABULAR_MODELS_ROOT = DATA / "Log_Tabular_Models"
 DATALAKE_CHALLENGE_ROOT = DATA / "Datasets" / "DataLake-challenge"
 OUTPUTS_LLM_ROOT = DATA / "Outputs_llm"
-INDEX_VERSION = 7
+INDEX_VERSION = 8
 QUESTION_KEYS = ("question", "query", "prompt", "qa", "input")
 GOLD_KEYS = ("gold", "golden", "answer", "reference", "ground_truth", "target", "label")
 PRED_KEYS = ("prediction", "predicted", "pred", "response", "output", "model_answer", "model_output")
@@ -1983,6 +1986,92 @@ def build_mismatch_index(index_payload: dict | None = None) -> dict:
     }
 
 
+def parse_analysis_json(value, fallback):
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback
+
+
+def parse_analysis_bool(value) -> bool:
+    return str(value).strip().casefold() in {"true", "1", "yes"}
+
+
+def build_failure_analysis_index() -> dict:
+    summary_path = FAILURE_ANALYSIS_ROOT / "summary.csv"
+    cases_path = FAILURE_ANALYSIS_ROOT / "all_failed_cases.csv"
+    if not summary_path.is_file() or not cases_path.is_file():
+        return {
+            "version": 1,
+            "available": False,
+            "summary": [],
+            "records": [],
+            "note": "Run scripts/analyze_failure_modes.py to generate the failure-analysis dataset.",
+        }
+
+    with summary_path.open(newline="", encoding="utf-8-sig") as handle:
+        summary_rows = list(csv.DictReader(handle))
+    with cases_path.open(newline="", encoding="utf-8-sig") as handle:
+        case_rows = list(csv.DictReader(handle))
+
+    summary = []
+    for row in summary_rows:
+        summary.append({
+            "benchmark": row.get("benchmark", ""),
+            "solution": row.get("solution", ""),
+            "totalWrongCases": int(row.get("total_wrong_cases") or 0),
+            "misalignmentCases": int(row.get("misalignment_cases") or 0),
+            "misalignmentRatio": float(row.get("misalignment_ratio") or 0),
+            "misinterpretationCases": int(row.get("misinterpretation_cases") or 0),
+            "misinterpretationRatio": float(row.get("misinterpretation_ratio") or 0),
+            "totalFailCases": int(row.get("total_fail_cases") or 0),
+            "failedCodeCases": int(row.get("failed_code_cases") or 0),
+            "failedCodeRatio": float(row.get("failed_code_ratio") or 0),
+            "sourceReport": row.get("source_report", ""),
+        })
+
+    records = []
+    for row in case_rows:
+        records.append({
+            "id": f"failure:{row.get('solution', '')}:{row.get('benchmark', '')}:{row.get('sample_id', '')}",
+            "benchmark": row.get("benchmark", ""),
+            "solution": row.get("solution", ""),
+            "sampleId": row.get("sample_id", ""),
+            "outcome": row.get("outcome", ""),
+            "classification": row.get("classification", ""),
+            "question": row.get("question", ""),
+            "gold": parse_analysis_json(row.get("gold_answer_y_star"), row.get("gold_answer_y_star", "")),
+            "prediction": row.get("predicted_answer_y", ""),
+            "wStatus": row.get("w_status", ""),
+            "wError": row.get("w_error", ""),
+            "zCreated": parse_analysis_bool(row.get("z_created")),
+            "zMatchesX": parse_analysis_bool(row.get("z_matches_x")),
+            "zStructuralMatch": parse_analysis_bool(row.get("z_structural_match")),
+            "zScopeMatch": parse_analysis_bool(row.get("z_scope_match")),
+            "expectedTables": parse_analysis_json(row.get("expected_x_tables"), []),
+            "selectedTables": parse_analysis_json(row.get("selected_z_tables"), []),
+            "goldTableEvidence": parse_analysis_json(row.get("gold_table_evidence"), []),
+            "xZEvidence": row.get("x_z_evidence", ""),
+            "xPreview": row.get("x_preview", ""),
+            "zPreview": row.get("z_preview", ""),
+            "judgeReason": row.get("llm_judge_reason", ""),
+            "paths": {
+                "X": [item for item in row.get("x_paths", "").splitlines() if item],
+                "Z": [item for item in row.get("z_paths", "").splitlines() if item],
+                "W": [item for item in row.get("w_paths", "").splitlines() if item],
+                "Y": [item for item in row.get("y_paths", "").splitlines() if item],
+            },
+            "sourceReport": row.get("source_report", ""),
+        })
+    return {
+        "version": 1,
+        "available": True,
+        "summary": summary,
+        "records": records,
+        "totalCases": len(records),
+    }
+
+
 def build_index() -> dict:
     indexed = {}
     for pipeline, datasets in load_catalog().items():
@@ -2000,6 +2089,7 @@ def build_index() -> dict:
     WEB_SIFLEX_INDEX_PATH.write_text(json.dumps(build_siflex_index(), ensure_ascii=False), encoding="utf-8")
     WEB_TABULAR_MODELS_INDEX_PATH.write_text(json.dumps(build_tabular_models_index(), ensure_ascii=False), encoding="utf-8")
     WEB_MISMATCH_INDEX_PATH.write_text(json.dumps(build_mismatch_index(payload), ensure_ascii=False), encoding="utf-8")
+    WEB_FAILURE_ANALYSIS_INDEX_PATH.write_text(json.dumps(build_failure_analysis_index(), ensure_ascii=False), encoding="utf-8")
     return payload
 
 
@@ -2438,6 +2528,59 @@ def load_index() -> dict:
     return build_index()
 
 
+def csv_boolean(value) -> bool:
+    return str(value).strip().casefold() in {"1", "true", "yes"}
+
+
+@lru_cache(maxsize=1)
+def load_failure_analysis() -> dict:
+    summary_path = FAILURE_ANALYSIS_ROOT / "summary.csv"
+    cases_path = FAILURE_ANALYSIS_ROOT / "all_failed_cases.csv"
+    if not summary_path.is_file() or not cases_path.is_file():
+        return {
+            "version": 1,
+            "summary": [],
+            "cases": [],
+            "error": "Failure analysis has not been generated. Run python scripts/analyze_failure_modes.py.",
+        }
+
+    with summary_path.open(newline="", encoding="utf-8-sig") as handle:
+        summary = list(csv.DictReader(handle))
+    with cases_path.open(newline="", encoding="utf-8-sig") as handle:
+        cases = list(csv.DictReader(handle))
+
+    summary_integer_fields = {
+        "total_wrong_cases", "misalignment_cases", "misinterpretation_cases",
+        "total_fail_cases", "failed_code_cases",
+    }
+    summary_ratio_fields = {"misalignment_ratio", "misinterpretation_ratio", "failed_code_ratio"}
+    for row in summary:
+        for field in summary_integer_fields:
+            row[field] = int(row.get(field) or 0)
+        for field in summary_ratio_fields:
+            row[field] = float(row.get(field) or 0)
+
+    case_boolean_fields = {"z_created", "z_matches_x", "z_structural_match", "z_scope_match"}
+    case_integer_fields = {"misalignment", "misinterpretation", "failed_code"}
+    for index, row in enumerate(cases):
+        for field in case_boolean_fields:
+            row[field] = csv_boolean(row.get(field))
+        for field in case_integer_fields:
+            row[field] = int(row.get(field) or 0)
+        row["id"] = f"failure:{row.get('benchmark')}:{row.get('solution')}:{row.get('sample_id')}:{index}"
+        row["status"] = "error" if row.get("classification") == "failed_code" else "wrong"
+
+    return {
+        "version": 1,
+        "summary": summary,
+        "cases": cases,
+        "generatedFrom": [
+            summary_path.relative_to(ROOT).as_posix(),
+            cases_path.relative_to(ROOT).as_posix(),
+        ],
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     @staticmethod
     def data_path(relative: str) -> Path | None:
@@ -2492,6 +2635,8 @@ class Handler(BaseHTTPRequestHandler):
                 "offset": offset,
                 "totals": {status: totals.get(status, 0) for status in ("correct", "wrong", "error")},
             }
+        elif request.path == "/api/failure-analysis":
+            payload = load_failure_analysis()
         elif request.path == "/api/workflow-summary":
             params = parse_qs(request.query)
             pipeline = params.get("pipeline", [""])[0]
@@ -2629,6 +2774,7 @@ def main():
     parser.add_argument("--build-index", action="store_true")
     parser.add_argument("--build-siflex-index", action="store_true")
     parser.add_argument("--build-mismatch-index", action="store_true")
+    parser.add_argument("--build-failure-analysis-index", action="store_true")
     parser.add_argument("--ready-file", type=Path)
     args = parser.parse_args()
     if args.build_index:
@@ -2642,6 +2788,9 @@ def main():
         return
     if args.build_mismatch_index:
         WEB_MISMATCH_INDEX_PATH.write_text(json.dumps(build_mismatch_index(), ensure_ascii=False), encoding="utf-8")
+        return
+    if args.build_failure_analysis_index:
+        WEB_FAILURE_ANALYSIS_INDEX_PATH.write_text(json.dumps(build_failure_analysis_index(), ensure_ascii=False), encoding="utf-8")
         return
     print("Preparing QA index...", flush=True)
     load_index()
